@@ -72,7 +72,7 @@ public extension Configuration {
                 let effectiveOptInRules: [String]
                 if optInRules.contains(RuleIdentifier.all.stringRepresentation) {
                     let allOptInRules = RuleRegistry.shared.list.list.compactMap { ruleID, ruleType in
-                        ruleType is any OptInRule.Type && !(ruleType is any AnalyzerRule.Type) ? ruleID : nil
+                        ruleType.isOptIn && !ruleType.isAnalyzer ? ruleID : nil
                     }
                     effectiveOptInRules = Array(Set(allOptInRules + optInRules))
                 } else {
@@ -82,7 +82,7 @@ public extension Configuration {
                 let effectiveAnalyzerRules: [String]
                 if analyzerRules.contains(RuleIdentifier.all.stringRepresentation) {
                     let allAnalyzerRules = RuleRegistry.shared.list.list.compactMap { ruleID, ruleType in
-                        ruleType is any AnalyzerRule.Type ? ruleID : nil
+                        ruleType.isAnalyzer ? ruleID : nil
                     }
                     effectiveAnalyzerRules = allAnalyzerRules
                 } else {

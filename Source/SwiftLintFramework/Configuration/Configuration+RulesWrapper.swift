@@ -59,7 +59,7 @@ internal extension Configuration {
                 resultingRules = allRulesWrapped.filter { tuple in
                     let id = type(of: tuple.rule).identifier
                     return !disabledRuleIdentifiers.contains(id)
-                        && (!(tuple.rule is any OptInRule) || optInRuleIdentifiers.contains(id))
+                        && (!type(of: tuple.rule).isOptIn || optInRuleIdentifiers.contains(id))
                 }.map(\.rule)
             }
 
@@ -324,7 +324,8 @@ internal extension Configuration {
             }
 
             let isOptInRule = allRulesWrapped
-                .first { type(of: $0.rule).identifier == identifier }?.rule is any OptInRule
+                .first { type(of: $0.rule).identifier == identifier }
+                .map { type(of: $0.rule).isOptIn } ?? false
             Self.isOptInRuleCacheLock.withLock {
                 Self.isOptInRuleCache[identifier] = isOptInRule
             }

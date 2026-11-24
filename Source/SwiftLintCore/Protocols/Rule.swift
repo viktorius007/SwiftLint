@@ -9,6 +9,26 @@ public protocol Rule: Sendable {
     /// A verbose description of many of this rule's properties.
     static var description: RuleDescription { get }
 
+    /// Whether this rule conforms to `OptInRule`. A static requirement, because a runtime conformance check costs
+    /// a scan of all conformance records for every rule type.
+    static var isOptIn: Bool { get }
+
+    /// Whether this rule conforms to `AnalyzerRule`.
+    static var isAnalyzer: Bool { get }
+
+    /// Whether this rule conforms to `AnyCollectingRule`.
+    static var isCollecting: Bool { get }
+
+    /// Whether this rule conforms to `SourceKitFreeRule`.
+    static var isSourceKitFree: Bool { get }
+
+    /// Whether this rule conforms to `ConditionallySourceKitFree`.
+    static var isConditionallySourceKitFree: Bool { get }
+
+    /// The cache description which will be used to determine if a previous
+    /// cached value is still valid given the new cache value.
+    var cacheDescription: String { get }
+
     /// This rule's configuration.
     var configuration: ConfigurationType { get set }
 
@@ -101,6 +121,16 @@ public protocol Rule: Sendable {
 }
 
 public extension Rule {
+    static var isOptIn: Bool { false }
+
+    static var isAnalyzer: Bool { false }
+
+    static var isCollecting: Bool { false }
+
+    static var isSourceKitFree: Bool { false }
+
+    static var isConditionallySourceKitFree: Bool { false }
+
     var shouldLintEmptyFiles: Bool {
         false
     }
@@ -129,10 +159,8 @@ public extension Rule {
         // no-op: only CollectingRules mutate their storage
     }
 
-    /// The cache description which will be used to determine if a previous
-    /// cached value is still valid given the new cache value.
     var cacheDescription: String {
-        (self as? any CacheDescriptionProvider)?.cacheDescription ?? createConfigurationDescription().oneLiner()
+        createConfigurationDescription().oneLiner()
     }
 
     func createConfigurationDescription(exclusiveOptions: Set<String> = []) -> RuleConfigurationDescription {
@@ -165,6 +193,10 @@ public extension Rule {
 
 /// A rule that is not enabled by default. Rules conforming to this need to be explicitly enabled by users.
 public protocol OptInRule: Rule {}
+
+public extension OptInRule {
+    static var isOptIn: Bool { true }
+}
 
 /// A rule that can correct violations.
 public protocol CorrectableRule: Rule {
@@ -248,10 +280,18 @@ public extension SubstitutionCorrectableRule {
 /// A rule that does not need SourceKit to operate and can still operate even after SourceKit has crashed.
 public protocol SourceKitFreeRule: Rule {}
 
+public extension SourceKitFreeRule {
+    static var isSourceKitFree: Bool { true }
+}
+
 /// A rule that may or may not require SourceKit depending on its configuration.
 public protocol ConditionallySourceKitFree: Rule {
     /// Whether this rule is currently configured in a way that doesn't require SourceKit.
     var isEffectivelySourceKitFree: Bool { get }
+}
+
+public extension ConditionallySourceKitFree {
+    static var isConditionallySourceKitFree: Bool { true }
 }
 
 public extension Rule {
@@ -260,12 +300,12 @@ public extension Rule {
     /// ConditionallySourceKitFree and is currently configured to not require SourceKit.
     var requiresSourceKit: Bool {
         // Check if rule conforms to SourceKitFreeRule
-        if self is any SourceKitFreeRule {
+        if Self.isSourceKitFree {
             return false
         }
 
         // Check if rule is conditionally SourceKit-free and currently doesn't need SourceKit
-        if let conditionalRule = self as? any ConditionallySourceKitFree {
+        if Self.isConditionallySourceKitFree, let conditionalRule = self as? any ConditionallySourceKitFree {
             return !conditionalRule.isEffectivelySourceKitFree
         }
 
@@ -277,6 +317,10 @@ public extension Rule {
 /// A rule that can operate on the post-typechecked AST using compiler arguments. Performs rules that are more like
 /// static analysis than syntactic checks.
 public protocol AnalyzerRule: OptInRule {}
+
+public extension AnalyzerRule {
+    static var isAnalyzer: Bool { true }
+}
 
 public extension AnalyzerRule {
     func validate(file _: SwiftLintFile) -> [StyleViolation] {

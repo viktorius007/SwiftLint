@@ -280,7 +280,7 @@ extension Configuration {
                 return Issue.ruleDisabledInParentConfiguration(ruleID: ruleType.identifier)
             }
 
-            if ruleType is any OptInRule.Type {
+            if ruleType.isOptIn {
                 if enabledInParentRules.union(optInRules).isDisjoint(with: allIdentifiers) {
                     return Issue.ruleNotEnabledInOptInRules(ruleID: ruleType.identifier)
                 }
@@ -294,9 +294,8 @@ extension Configuration {
     }
 
     private static func warnAboutMisplacedAnalyzerRules(optInRules: [String], ruleList: RuleList) {
-        let analyzerRules = ruleList.list
-            .filter { $0.value.self is any AnalyzerRule.Type }
-            .map(\.key)
+        // A closure, because a key path through the rule metatype crashes the Swift 6.4.2 compiler.
+        let analyzerRules = ruleList.list.compactMap { ruleID, ruleType in ruleType.isAnalyzer ? ruleID : nil }
         Set(analyzerRules).intersection(optInRules)
             .sorted()
             .forEach {

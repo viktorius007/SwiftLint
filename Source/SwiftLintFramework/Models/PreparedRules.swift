@@ -30,8 +30,8 @@ struct PreparedRules {
     init(allRules: [any Rule], mode: LintOrAnalyzeMode) {
         let rules = allRules.filter { rule in
             switch mode {
-            case .lint: !(rule is any AnalyzerRule)
-            case .analyze: rule is any AnalyzerRule || rule is SuperfluousDisableCommandRule
+            case .lint: !type(of: rule).isAnalyzer
+            case .analyze: type(of: rule).isAnalyzer || rule is SuperfluousDisableCommandRule
             }
         }
         let superfluousDisableCommandRule = rules.lazy.compactMap { $0 as? SuperfluousDisableCommandRule }.first
@@ -50,7 +50,7 @@ struct PreparedRules {
                 disableCommandIdentifiers: Set(identifiers.map { RuleIdentifier($0) })
             )
         }
-        self.collectingRules = rules.filter { $0 is any AnyCollectingRule }
+        self.collectingRules = rules.filter { type(of: $0).isCollecting }
         self.superfluousDisableCommandRule = superfluousDisableCommandRule
     }
 }

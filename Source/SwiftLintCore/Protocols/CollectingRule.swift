@@ -1,6 +1,10 @@
 /// Type-erased protocol used to check whether a rule is collectable.
 public protocol AnyCollectingRule: Rule { }
 
+public extension AnyCollectingRule {
+    static var isCollecting: Bool { true }
+}
+
 /// A rule that requires knowledge of all other files being linted.
 public protocol CollectingRule: AnyCollectingRule {
     /// The kind of information to collect for each file being linted for this rule.
