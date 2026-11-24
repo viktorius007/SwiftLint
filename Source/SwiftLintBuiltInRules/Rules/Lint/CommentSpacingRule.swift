@@ -120,8 +120,7 @@ struct CommentSpacingRule: SourceKitFreeRule, SubstitutionCorrectableRule {
 
     func violationRanges(in file: SwiftLintFile) -> [NSRange] {
         // Find all comment tokens in the file and regex search them for violations
-        file.syntaxClassifications
-            .filter(\.kind.isComment)
+        file.commentRanges
             .map { $0.range.toSourceKittenByteRange() }
             .compactMap { (range: ByteRange) -> [NSRange]? in
                 file.stringView

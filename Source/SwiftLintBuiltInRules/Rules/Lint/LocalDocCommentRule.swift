@@ -45,7 +45,7 @@ struct LocalDocCommentRule: SwiftSyntaxRule, OptInRule {
         Visitor(
             configuration: configuration,
             file: file,
-            classifications: file.syntaxClassifications.filter { $0.kind != .none }
+            commentRanges: file.commentRanges
         )
     }
 }
@@ -56,8 +56,8 @@ private extension LocalDocCommentRule {
 
         init(configuration: ConfigurationType,
              file: SwiftLintFile,
-             classifications: [SyntaxClassifiedRange]) {
-            self.docCommentRanges = classifications
+             commentRanges: [CommentRange]) {
+            self.docCommentRanges = commentRanges
                 .filter { $0.kind == .docLineComment || $0.kind == .docBlockComment }
                 .map(\.range)
             super.init(configuration: configuration, file: file)

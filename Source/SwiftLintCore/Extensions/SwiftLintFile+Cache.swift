@@ -48,6 +48,7 @@ final class FileCache: @unchecked Sendable {
     fileprivate var locationConverter = Cached<SourceLocationConverter>.notComputed
     fileprivate var commands = Cached<[Command]>.notComputed
     fileprivate var syntaxClassifications = Cached<SyntaxClassifications>.notComputed
+    fileprivate var commentRanges = Cached<[CommentRange]>.notComputed
     fileprivate var linesWithTokens = Cached<Set<Int>>.notComputed
     fileprivate var commentLines = Cached<Set<Int>>.notComputed
     fileprivate var emptyLines = Cached<Set<Int>>.notComputed
@@ -131,6 +132,7 @@ final class FileCache: @unchecked Sendable {
             locationConverter = .notComputed
             commands = .notComputed
             syntaxClassifications = .notComputed
+            commentRanges = .notComputed
             linesWithTokens = .notComputed
             commentLines = .notComputed
             emptyLines = .notComputed
@@ -226,6 +228,15 @@ extension SwiftLintFile {
             { syntaxTree.classifications }
             get: { fileCache.syntaxClassifications }
             set: { fileCache.syntaxClassifications = $0 }
+    }
+
+    /// The ranges of all comments in this file in source order. Use this instead of filtering
+    /// `syntaxClassifications`, which classifies every token of the file.
+    public var commentRanges: [CommentRange] {
+        fileCache.getOrCompute
+            { CommentRangesVisitor.commentRanges(in: self) }
+            get: { fileCache.commentRanges }
+            set: { fileCache.commentRanges = $0 }
     }
 
     public var syntaxMap: SwiftLintSyntaxMap {
