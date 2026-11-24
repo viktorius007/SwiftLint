@@ -7,6 +7,8 @@ import SwiftLintCore
 struct PreparedRule {
     /// The rule itself.
     let rule: any Rule
+    /// The rule's identifier.
+    let identifier: String
     /// Whether the rule supports the Swift version in use.
     let supportsCurrentSwiftVersion: Bool
     /// Whether the rule needs SourceKit in its current configuration.
@@ -42,6 +44,7 @@ struct PreparedRules {
                 + commonIdentifiers
             return PreparedRule(
                 rule: rule,
+                identifier: description.identifier,
                 supportsCurrentSwiftVersion: SwiftVersion.current >= description.minSwiftVersion,
                 requiresSourceKit: rule.requiresSourceKit,
                 disableCommandIdentifiers: Set(identifiers.map { RuleIdentifier($0) })

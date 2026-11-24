@@ -243,7 +243,10 @@ extension Configuration {
         if visitor.options.progress {
             await progress.initialize()
         }
+        let lintsManyFiles = visitor.parallel && linters.count >= ProcessInfo.processInfo.activeProcessorCount
         let visit = { (linter: CollectedLinter) -> SwiftLintFile in
+            var linter = linter
+            linter.isLintedAlongsideManyFiles = lintsManyFiles
             if !visitor.options.quiet {
                 if visitor.options.progress {
                     await progress.printNext()

@@ -117,7 +117,7 @@ private extension PreparedRule {
               superfluousDisableCommandRule: SuperfluousDisableCommandRule?,
               globalConfiguration: GlobalConfiguration,
               compilerArguments: [String]) -> LintResult {
-        let ruleID = type(of: rule).identifier
+        let ruleID = identifier
 
         // Wrap entire lint process including shouldRun check in rule context
         return CurrentRule.$identifier.withValue(ruleID) {
@@ -311,6 +311,16 @@ public struct CollectedLinter {
     private let configuration: Configuration
     private let compilerArguments: [String]
 
+    /// Whether enough other files are linted at the same time to keep all processor cores busy.
+    ///
+    /// In that case, the rules of a small file run on a single thread. Spreading them over all cores costs more
+    /// than it gains, because every thread then updates reference counts in the same syntax tree. Large files
+    /// still run their rules in parallel so that a single big file does not determine the total duration.
+    var isLintedAlongsideManyFiles = false
+
+    /// The file size in bytes from which on rules always run in parallel.
+    private static let minimumSizeForParallelRules = 16_000
+
     fileprivate init(from linter: Linter) {
         file = linter.file
         rules = linter.preparedRules.rules
@@ -351,13 +361,17 @@ public struct CollectedLinter {
         }
 
         let fileProperties = FileProperties(file: file)
-        let validationResults: [LintResult] = rules.parallelMap {
-            $0.lint(file: file, fileProperties: fileProperties, benchmark: benchmark,
-                    storage: storage,
-                    superfluousDisableCommandRule: superfluousDisableCommandRule,
-                    globalConfiguration: configuration.globalConfiguration,
-                    compilerArguments: compilerArguments)
+        let lint = { @Sendable (rule: PreparedRule) in
+            rule.lint(file: file, fileProperties: fileProperties, benchmark: benchmark,
+                      storage: storage,
+                      superfluousDisableCommandRule: superfluousDisableCommandRule,
+                      globalConfiguration: configuration.globalConfiguration,
+                      compilerArguments: compilerArguments)
         }
+        let validationResults: [LintResult] =
+            isLintedAlongsideManyFiles && file.contents.utf8.count < Self.minimumSizeForParallelRules
+                ? rules.map(lint)
+                : rules.parallelMap(transform: lint)
         let undefinedSuperfluousCommandViolations = undefinedSuperfluousCommandViolations(
             regions: fileProperties.regions, configuration: configuration,
             superfluousDisableCommandRule: superfluousDisableCommandRule)
