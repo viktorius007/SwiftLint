@@ -80,6 +80,25 @@ internal extension Configuration {
             return resultingRules
         }
 
+        private var cachedPreparedRules = [LintOrAnalyzeMode: PreparedRules]()
+        private let preparedRulesLock = NSLock()
+
+        /// The enabled rules that run in the given mode, together with their file-independent properties.
+        /// The result is computed once and shared by all files linted with this configuration.
+        func preparedRules(for mode: LintOrAnalyzeMode) -> PreparedRules {
+            let rules = resultingRules
+
+            preparedRulesLock.lock()
+            defer { preparedRulesLock.unlock() }
+
+            if let preparedRules = cachedPreparedRules[mode] {
+                return preparedRules
+            }
+            let preparedRules = PreparedRules(allRules: rules, mode: mode)
+            cachedPreparedRules[mode] = preparedRules
+            return preparedRules
+        }
+
         lazy var disabledRuleIdentifiers: [String] = {
             switch mode {
             case let .defaultConfiguration(disabled, _):
