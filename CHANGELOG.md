@@ -17,6 +17,15 @@
   `)` would otherwise be stranded with the last argument.  
   [GandaLF2006](https://github.com/GandaLF2006)
 
+* Improve linting speed. Rule and file properties that do not change are computed
+  once per configuration or file instead of once per rule and file, files in the
+  same directory share one configuration lookup, comment-based rules no longer
+  classify every token, `vertical_parameter_alignment` and
+  `closure_end_indentation` no longer rebuild all lines of a file repeatedly,
+  `unused_parameter` compares identifiers without temporary strings, and rules of
+  small files run on a single thread when many files are linted.  
+  [viktorius007](https://github.com/viktorius007)
+
 ### Bug Fixes
 
 * Preserve inline comments when `control_statement` removes parentheses during
