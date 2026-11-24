@@ -39,13 +39,30 @@ public enum IdentifierDeclaration: Hashable {
             // Insignificant names cannot refer to each other.
             return false
         }
-        if disregardBackticks {
-            let backticks = CharacterSet(charactersIn: "`")
-            let id = id.trimmingCharacters(in: backticks)
-            let name = name.trimmingCharacters(in: backticks)
-            return id == name || "$\(id)" == name
+        // This method is called for every pair of a reference and a declaration in scope. It therefore avoids
+        // Foundation's string trimming and only builds the `$`-prefixed name if the declared name can match it.
+        let id = disregardBackticks ? id.trimmingBackticks() : id
+        let name = disregardBackticks ? name.trimmingBackticks() : name
+        return id == name || name.unicodeScalars.first == "$" && "$\(id)" == name
+    }
+}
+
+private extension String {
+    /// Removes all leading and trailing backticks like `trimmingCharacters(in:)` would do, but leaves strings
+    /// without such backticks untouched.
+    func trimmingBackticks() -> String {
+        let scalars = unicodeScalars
+        guard scalars.first == "`" || scalars.last == "`" else {
+            return self
         }
-        return id == name || "$\(id)" == name
+        var trimmedScalars = scalars[...]
+        while trimmedScalars.first == "`" {
+            trimmedScalars.removeFirst()
+        }
+        while trimmedScalars.last == "`" {
+            trimmedScalars.removeLast()
+        }
+        return String(trimmedScalars)
     }
 }
 
