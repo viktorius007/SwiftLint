@@ -1,6 +1,10 @@
 import Foundation
 import SourceKittenFramework
 
+/// Whether the environment asks to disable SourceKit. Read once, because building the environment dictionary is
+/// expensive and the value is queried for every rule and file.
+private let isSourceKitDisabledByEnvironment = ProcessInfo.processInfo.environment["SWIFTLINT_DISABLE_SOURCEKIT"] != nil
+
 public extension Request {
     nonisolated(unsafe) static var disableSourceKitOverride = false
 
@@ -10,7 +14,7 @@ public extension Request {
         true
         #else
         // Runtime
-        ProcessInfo.processInfo.environment["SWIFTLINT_DISABLE_SOURCEKIT"] != nil || disableSourceKitOverride
+        isSourceKitDisabledByEnvironment || disableSourceKitOverride
         #endif
     }
 
