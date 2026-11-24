@@ -42,6 +42,8 @@ private enum CacheLookup<T> {
 final class FileCache: @unchecked Sendable {
     fileprivate let queue = DispatchQueue(label: "io.realm.swiftlint.fileCache", attributes: .concurrent)
 
+    fileprivate var contents = Cached<String>.notComputed
+    fileprivate var stringView = Cached<StringView>.notComputed
     fileprivate var syntaxTree = Cached<SourceFileSyntax>.notComputed
     fileprivate var locationConverter = Cached<SourceLocationConverter>.notComputed
     fileprivate var commands = Cached<[Command]>.notComputed
@@ -123,6 +125,8 @@ final class FileCache: @unchecked Sendable {
     /// Resets all slots to `.notComputed`, forcing recomputation on next access.
     fileprivate func invalidateAll() {
         queue.sync(flags: .barrier) {
+            contents = .notComputed
+            stringView = .notComputed
             syntaxTree = .notComputed
             locationConverter = .notComputed
             commands = .notComputed
@@ -141,6 +145,30 @@ final class FileCache: @unchecked Sendable {
 }
 
 extension SwiftLintFile {
+    /// The file's contents.
+    ///
+    /// Cached here because the underlying SourceKitten `File` guards every read with a serial queue, which makes
+    /// all rules linting the same file in parallel wait for each other.
+    public var contents: String {
+        fileCache.getOrCompute
+            { file.contents }
+            get: { fileCache.contents }
+            set: { fileCache.contents = $0 }
+    }
+
+    /// A string view into the contents of this file optimized for string manipulation operations.
+    public var stringView: StringView {
+        fileCache.getOrCompute
+            { file.stringView }
+            get: { fileCache.stringView }
+            set: { fileCache.stringView = $0 }
+    }
+
+    /// The parsed lines for this file's contents.
+    public var lines: [Line] {
+        stringView.lines
+    }
+
     public var sourcekitdFailed: Bool {
         get { cachedResponse == nil }
         set {

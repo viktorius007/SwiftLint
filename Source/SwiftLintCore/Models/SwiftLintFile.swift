@@ -55,21 +55,6 @@ public final class SwiftLintFile: Sendable {
     public convenience init(contents: String, isTestFile: Bool = false) {
         self.init(file: File(contents: contents), isTestFile: isTestFile, isVirtual: true)
     }
-
-    /// The file's contents.
-    public var contents: String {
-        file.contents
-    }
-
-    /// A string view into the contents of this file optimized for string manipulation operations.
-    public var stringView: StringView {
-        file.stringView
-    }
-
-    /// The parsed lines for this file's contents.
-    public var lines: [Line] {
-        file.lines
-    }
 }
 
 // MARK: - Hashable Conformance
