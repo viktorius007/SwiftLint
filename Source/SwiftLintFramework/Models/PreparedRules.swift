@@ -20,8 +20,8 @@ struct PreparedRule {
 struct PreparedRules {
     /// The rules that run in this mode.
     let rules: [PreparedRule]
-    /// Whether at least one of the rules collects information from all files before linting.
-    let isCollecting: Bool
+    /// The rules that collect information from all files before linting.
+    let collectingRules: [any Rule]
     /// The `superfluous_disable_command` rule if it is enabled.
     let superfluousDisableCommandRule: SuperfluousDisableCommandRule?
 
@@ -47,7 +47,7 @@ struct PreparedRules {
                 disableCommandIdentifiers: Set(identifiers.map { RuleIdentifier($0) })
             )
         }
-        self.isCollecting = rules.contains { $0 is any AnyCollectingRule }
+        self.collectingRules = rules.filter { $0 is any AnyCollectingRule }
         self.superfluousDisableCommandRule = superfluousDisableCommandRule
     }
 }

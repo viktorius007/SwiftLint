@@ -276,7 +276,7 @@ public struct Linter {
         // The prepared rules are shared by all linters using the same configuration.
         let preparedRules = configuration.rulesWrapper.preparedRules(for: compilerArguments.isEmpty ? .lint : .analyze)
         self.preparedRules = preparedRules
-        self.isCollecting = preparedRules.isCollecting
+        self.isCollecting = preparedRules.collectingRules.isNotEmpty
     }
 
     /// Returns a linter capable of checking for violations after running each rule's collection step.
@@ -285,9 +285,11 @@ public struct Linter {
     ///
     /// - returns: A linter capable of checking for violations after running each rule's collection step.
     public func collect(into storage: RuleStorage) -> CollectedLinter {
-        let rules = preparedRules.rules
+        // Only collecting rules have something to do here. Skipping all others matters because this step runs for
+        // every file, including files whose violations are served from the cache.
+        let rules = preparedRules.collectingRules
         DispatchQueue.concurrentPerform(iterations: rules.count) { idx in
-            let rule = rules[idx].rule
+            let rule = rules[idx]
             let ruleID = type(of: rule).identifier
             CurrentRule.$identifier.withValue(ruleID) {
                 rule.collectInfo(for: file, into: storage, compilerArguments: compilerArguments)
