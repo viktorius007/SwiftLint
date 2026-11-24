@@ -317,7 +317,9 @@ extension Configuration: Hashable {
             lhs.reporter == rhs.reporter &&
             lhs.basedOnCustomConfigurationFiles == rhs.basedOnCustomConfigurationFiles &&
             lhs.cachePath == rhs.cachePath &&
-            lhs.rules == rhs.rules &&
+            // Configurations sharing their rules wrapper have the same rules. Skipping the element-wise comparison
+            // matters because configurations are compared for every directory containing lintable files.
+            (lhs.rulesWrapper === rhs.rulesWrapper || lhs.rules == rhs.rules) &&
             lhs.fileGraph == rhs.fileGraph &&
             lhs.allowZeroLintableFiles == rhs.allowZeroLintableFiles &&
             lhs.strict == rhs.strict &&

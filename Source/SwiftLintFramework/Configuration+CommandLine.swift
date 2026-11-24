@@ -116,18 +116,51 @@ extension Configuration {
             )
         }
 
-        return files.parallelFilterGroup { file in
-            let fileConfiguration = configuration(for: file)
+        // All files in a directory share their configuration. Resolving it once per directory instead of once per
+        // file avoids hashing and comparing whole configurations for every file.
+        let directories = files.map { $0.path?.deletingLastPathComponent() }
+        let uniqueDirectories = Array(Set(directories.compactMap(\.self)))
+        let directoryConfigurations = uniqueDirectories.parallelMap { configuration(forDirectory: $0) }
 
-            // Files whose configuration specifies they should be excluded will be skipped
-            let shouldSkip = fileConfiguration.excludedPaths.contains { excludedPath in
-                let filePathComponents = file.path?.pathComponents ?? []
-                let excludedPathComponents = excludedPath.pathComponents
-                return filePathComponents.starts(with: excludedPathComponents)
+        var configurations = [Self]()
+        var indexByConfiguration = [Self: Int]()
+        let index = { (configuration: Self) -> Int in
+            if let index = indexByConfiguration[configuration] {
+                return index
             }
-
-            return shouldSkip ? nil : fileConfiguration
+            configurations.append(configuration)
+            indexByConfiguration[configuration] = configurations.count - 1
+            return configurations.count - 1
         }
+        var indexByDirectory = [URL: Int](minimumCapacity: uniqueDirectories.count)
+        for (directory, configuration) in zip(uniqueDirectories, directoryConfigurations) {
+            indexByDirectory[directory] = index(configuration)
+        }
+        let indexOfSelf = directories.contains(nil) ? index(self) : nil
+
+        // Files whose configuration specifies they should be excluded will be skipped
+        let excludedPathComponents = configurations.map { $0.excludedPaths.map(\.pathComponents) }
+        let fileIndices: [Int?] = Array(zip(files, directories)).parallelMap { file, directory in
+            guard let index = directory.flatMap({ indexByDirectory[$0] }) ?? indexOfSelf else {
+                return nil
+            }
+            let excludedPathComponents = excludedPathComponents[index]
+            if excludedPathComponents.isEmpty {
+                return index
+            }
+            let filePathComponents = file.path?.pathComponents ?? []
+            return excludedPathComponents.contains { filePathComponents.starts(with: $0) } ? nil : index
+        }
+
+        var groupedFiles = [[SwiftLintFile]](repeating: [], count: configurations.count)
+        for (file, index) in zip(files, fileIndices) {
+            if let index {
+                groupedFiles[index].append(file)
+            }
+        }
+        return Dictionary(
+            uniqueKeysWithValues: zip(configurations, groupedFiles).filter(\.1.isNotEmpty)
+        )
     }
 
     private func outputFilename(for path: URL, duplicateFileNames: Set<String>) -> String {

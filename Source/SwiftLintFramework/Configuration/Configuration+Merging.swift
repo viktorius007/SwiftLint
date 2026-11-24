@@ -73,7 +73,7 @@ extension Configuration {
         (file.path?.deletingLastPathComponent()).map(configuration(forDirectory:)) ?? self
     }
 
-    private func configuration(forDirectory directory: URL) -> Configuration {
+    func configuration(forDirectory directory: URL) -> Configuration {
         // If the configuration was explicitly specified via the `--config` param, don't use nested configs
         guard !basedOnCustomConfigurationFiles else { return self }
 
