@@ -17,10 +17,8 @@ struct CollectionAlignmentRule: Rule {
 
 private extension CollectionAlignmentRule {
     final class Visitor: ViolationsSyntaxVisitor<ConfigurationType> {
-        // Computed once per file: `SourceLocationConverter.sourceLines` materializes every line of the
-        // file as a new `[String]` on each access, and the dictionary path below reads it once per
-        // element, which is quadratic in files holding large dictionary literals.
-        private lazy var sourceLines = locationConverter.sourceLines
+        // Read once per visitor: the dictionary path below needs the lines once per element.
+        private lazy var sourceLines = file.sourceLines
 
         override func visitPost(_ node: ArrayExprSyntax) {
             let locations = node.elements.map { element in

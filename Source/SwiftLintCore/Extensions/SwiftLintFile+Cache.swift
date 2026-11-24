@@ -46,6 +46,7 @@ final class FileCache: @unchecked Sendable {
     fileprivate var stringView = Cached<StringView>.notComputed
     fileprivate var syntaxTree = Cached<SourceFileSyntax>.notComputed
     fileprivate var locationConverter = Cached<SourceLocationConverter>.notComputed
+    fileprivate var sourceLines = Cached<[String]>.notComputed
     fileprivate var commands = Cached<[Command]>.notComputed
     fileprivate var syntaxClassifications = Cached<SyntaxClassifications>.notComputed
     fileprivate var commentRanges = Cached<[CommentRange]>.notComputed
@@ -130,6 +131,7 @@ final class FileCache: @unchecked Sendable {
             stringView = .notComputed
             syntaxTree = .notComputed
             locationConverter = .notComputed
+            sourceLines = .notComputed
             commands = .notComputed
             syntaxClassifications = .notComputed
             commentRanges = .notComputed
@@ -279,6 +281,17 @@ extension SwiftLintFile {
             set: { fileCache.locationConverter = $0 }
     }
 
+    /// The lines of this file as `locationConverter` sees them, so that its line numbers can index into them.
+    ///
+    /// Use this instead of `locationConverter.sourceLines`, which creates a new string for every line of the file
+    /// on each access.
+    public var sourceLines: [String] {
+        fileCache.getOrCompute
+            { locationConverter.sourceLines }
+            get: { fileCache.sourceLines }
+            set: { fileCache.sourceLines = $0 }
+    }
+
     public var commands: [Command] { cachedCommands.filter(\.isValid) }
 
     public var invalidCommands: [Command] { cachedCommands.filter { !$0.isValid } }
@@ -335,7 +348,7 @@ extension SwiftLintFile {
         fileCache.getOrCompute
             {
                 contents.contains("swiftlint:")
-                    ? CommandVisitor(locationConverter: locationConverter).walk(file: self, handler: \.commands)
+                    ? CommandVisitor(file: self).walk(file: self, handler: \.commands)
                     : []
             }
             get: { fileCache.commands }

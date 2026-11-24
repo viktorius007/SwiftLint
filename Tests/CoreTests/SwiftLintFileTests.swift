@@ -1,5 +1,6 @@
 import Foundation
 import SwiftLintFramework
+import SwiftSyntax
 import Testing
 
 @testable import SwiftLintCore
@@ -18,6 +19,18 @@ final class SwiftLintFileTests {
         } catch {
             Issue.record("Failed to remove temporary file: \(error)")
         }
+    }
+
+    @Test
+    func sourceLinesFollowContents() {
+        let file = SwiftLintFile(contents: "let i = 1\r\nlet é = 2\n")
+
+        #expect(file.sourceLines.count == 3)
+        #expect(file.sourceLines == file.locationConverter.sourceLines)
+
+        file.write("let j = 2")
+
+        #expect(file.sourceLines == ["let j = 2"])
     }
 
     @Test

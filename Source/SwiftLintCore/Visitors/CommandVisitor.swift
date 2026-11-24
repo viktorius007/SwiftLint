@@ -6,10 +6,11 @@ import SwiftSyntax
 /// Visits the source syntax tree to collect all SwiftLint-style comment commands.
 final class CommandVisitor: SyntaxVisitor {
     private(set) var commands: [Command] = []
-    let locationConverter: SourceLocationConverter
+    private let file: SwiftLintFile
+    private lazy var locationConverter = file.locationConverter
 
-    init(locationConverter: SourceLocationConverter) {
-        self.locationConverter = locationConverter
+    init(file: SwiftLintFile) {
+        self.file = file
         super.init(viewMode: .sourceAccurate)
     }
 
@@ -28,7 +29,7 @@ final class CommandVisitor: SyntaxVisitor {
                 }
                 let offset = comment.utf8.distance(from: comment.utf8.startIndex, to: lower)
                 let location = locationConverter.location(for: position.advanced(by: offset))
-                let line = locationConverter.sourceLines[location.line - 1]
+                let line = file.sourceLines[location.line - 1]
                 guard let character = line.characterPosition(of: location.column) else {
                     break
                 }

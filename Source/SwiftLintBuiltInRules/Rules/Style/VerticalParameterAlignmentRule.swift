@@ -52,7 +52,7 @@ private extension VerticalParameterAlignmentRule {
         /// by multi-byte characters (e.g. a non-ASCII function name) are compared by their visible alignment
         /// rather than by their byte offset.
         private func graphemeColumn(line: Int, column: Int) -> Int {
-            guard let graphemeClusters = String(locationConverter.sourceLines[line - 1].utf8.prefix(column - 1)) else {
+            guard let graphemeClusters = String(file.sourceLines[line - 1].utf8.prefix(column - 1)) else {
                 return column
             }
             return graphemeClusters.count + 1

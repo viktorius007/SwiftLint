@@ -197,7 +197,7 @@ private extension ClosureEndIndentationRule {
         private func getFirstNonWhitespaceColumn(onLine lineNumber: Int) -> Int {
             // Use the lines seen by `locationConverter`, which produced `lineNumber`.
             // `file.lines` counts CRLF line endings differently, corrupting files.
-            let sourceLines = locationConverter.sourceLines
+            let sourceLines = file.sourceLines
             guard lineNumber > 0, lineNumber <= sourceLines.count else {
                 return 1 // Should not happen
             }
