@@ -70,8 +70,46 @@ public enum Excluder {
 extension FileManager: @unchecked @retroactive Sendable {}
 #endif
 
+/// The properties of a file system item needed to find and cache lintable files.
+private struct FileStatus {
+    let isRegularFile: Bool
+    let isSymbolicLink: Bool
+
+    #if !canImport(Darwin) && !os(Windows)
+
+    let modificationDate: Date
+
+    #endif
+
+    init?(of url: URL) {
+        #if canImport(Darwin) || os(Windows)
+        guard let values = try? url.resourceValues(forKeys: FileManager.enumeratorProperties) else {
+            return nil
+        }
+        isRegularFile = values.isRegularFile == true
+        isSymbolicLink = values.isSymbolicLink == true
+        #else
+        // A single `lstat` call is enough. `URL.resourceValues(forKeys:)` and
+        // `FileManager.attributesOfItem(atPath:)` build a full attributes dictionary instead, which includes
+        // looking up the names of the owning user and group for every item.
+        var info = stat()
+        let succeeded = url.withUnsafeFileSystemRepresentation { path in
+            path.map { lstat($0, &info) == 0 } ?? false
+        }
+        guard succeeded else {
+            return nil
+        }
+        let type = info.st_mode & S_IFMT
+        let nanoseconds = TimeInterval(info.st_mtim.tv_nsec) / 1_000_000_000
+        isRegularFile = type == S_IFREG
+        isSymbolicLink = type == S_IFLNK
+        modificationDate = Date(timeIntervalSince1970: TimeInterval(info.st_mtim.tv_sec) + nanoseconds)
+        #endif
+    }
+}
+
 extension FileManager: LintableFileManager {
-    private static let enumeratorProperties: Set<URLResourceKey> = [
+    fileprivate static let enumeratorProperties: Set<URLResourceKey> = [
         .isRegularFileKey,
         .isSymbolicLinkKey,
     ]
@@ -111,20 +149,20 @@ extension FileManager: LintableFileManager {
         var directoriesToWalk = [URL]()
 
         for case var element as URL in enumerator {
-            var resourceValues = try? element.resourceValues(forKeys: Self.enumeratorProperties)
-            if resourceValues?.isSymbolicLink == true {
+            var status = FileStatus(of: element)
+            if status?.isSymbolicLink == true {
                 element = element.standardizedFileURL
                 if excluder.excludes(path: element) {
                     continue
                 }
                 element.resolveSymlinksInPath()
-                resourceValues = try? element.resourceValues(forKeys: Self.enumeratorProperties)
+                status = FileStatus(of: element)
             }
-            if resourceValues?.isRegularFile == true {
+            if status?.isRegularFile == true {
                 if element.pathExtension == "swift", !excluder.excludes(path: element) {
                     files.append(element)
                 }
-            } else if resourceValues != nil, !excluder.excludes(path: element) {
+            } else if status != nil, !excluder.excludes(path: element) {
                 directoriesToWalk.append(element)
             }
         }
@@ -133,6 +171,10 @@ extension FileManager: LintableFileManager {
     }
 
     public func modificationDate(forFileAtPath path: URL) -> Date? {
+        #if canImport(Darwin) || os(Windows)
         (try? attributesOfItem(atPath: path.filepath))?[.modificationDate] as? Date
+        #else
+        FileStatus(of: path)?.modificationDate
+        #endif
     }
 }
