@@ -66,13 +66,9 @@ extension Configuration {
     }
 
     private func makeUnique(paths: [URL]) -> [URL] {
-        #if os(macOS)
-        let result = NSOrderedSet(array: paths)
-        #else
-        let result = NSMutableOrderedSet(capacity: paths.count)
-        result.addObjects(from: paths)
-        #endif
-        return result.array as! [URL] // swiftlint:disable:this force_cast
+        // A native set avoids bridging every URL to `NSURL` and back, which `NSOrderedSet` requires.
+        var seenPaths = Set<URL>(minimumCapacity: paths.count)
+        return paths.filter { seenPaths.insert($0).inserted }
     }
 
     func filteredPaths(in paths: [URL], excludeByPrefix: Bool) -> [URL] {
