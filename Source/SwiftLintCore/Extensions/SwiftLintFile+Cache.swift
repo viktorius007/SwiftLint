@@ -148,6 +148,18 @@ final class FileCache: @unchecked Sendable {
     }
 }
 
+private extension SourceFileSyntax {
+    /// Visits every node of the tree once before the tree is shared between rules.
+    ///
+    /// SwiftSyntax creates the data of a node's children when they are first accessed and guards that with a
+    /// single lock per tree. Rules running in parallel traverse a tree in the same order, so without this step
+    /// they would all wait for that lock at every node.
+    func withAllNodesCreated() -> Self {
+        SyntaxVisitor(viewMode: .all).walk(self)
+        return self
+    }
+}
+
 extension SwiftLintFile {
     /// The file's contents.
     ///
@@ -258,7 +270,7 @@ extension SwiftLintFile {
 
     public var syntaxTree: SourceFileSyntax {
         fileCache.getOrCompute
-            { Parser.parse(source: contents) }
+            { Parser.parse(source: contents).withAllNodesCreated() }
             get: { fileCache.syntaxTree }
             set: { fileCache.syntaxTree = $0 }
     }
@@ -268,7 +280,8 @@ extension SwiftLintFile {
             {
                 OperatorTable.standardOperators
                     .foldAll(syntaxTree) { _ in /* Don't handle errors. */ }
-                    .as(SourceFileSyntax.self)
+                    .as(SourceFileSyntax.self)?
+                    .withAllNodesCreated()
             }
             get: { fileCache.foldedSyntaxTree }
             set: { fileCache.foldedSyntaxTree = $0 }
