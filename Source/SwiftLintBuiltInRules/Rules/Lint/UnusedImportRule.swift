@@ -25,7 +25,11 @@ struct UnusedImportRule: CorrectableRule, AnalyzerRule, CollectingRule {
     )
 
     func collectInfo(for file: SwiftLintFile, compilerArguments: [String]) -> [ImportUsage] {
-        importUsage(in: file, compilerArguments: compilerArguments)
+        // Validation is skipped for a file that SourceKit cannot handle. Collecting has to skip it as well.
+        guard !Request.disableSourceKit, !file.sourcekitdFailed else {
+            return []
+        }
+        return importUsage(in: file, compilerArguments: compilerArguments)
     }
 
     func validate(file: SwiftLintFile,
@@ -104,9 +108,7 @@ private extension SwiftLintFile {
     func getImportUsage(compilerArguments: [String], configuration: UnusedImportConfiguration) -> [ImportUsage] {
         let currentModule = (compilerArguments.firstIndex(of: "-module-name")?.advanced(by: 1))
             .map { compilerArguments[$0] }
-        var (imports, usrFragments) = getImportsAndUSRFragments(
-            compilerArguments: compilerArguments, currentModule: currentModule
-        )
+        var (imports, usrFragments) = getImportsAndUSRFragments(compilerArguments: compilerArguments)
 
         // Always disallow 'Swift' and 'SwiftShims' because they're always available without importing.
         usrFragments.remove("Swift")
@@ -168,15 +170,13 @@ private extension SwiftLintFile {
             : unusedImportUsages
     }
 
-    func getImportsAndUSRFragments(
-        compilerArguments: [String], currentModule: String?
-    ) -> (imports: Set<String>, usrFragments: Set<String>) {
+    func getImportsAndUSRFragments(compilerArguments: [String]) -> (imports: Set<String>, usrFragments: Set<String>) {
         var imports = Set<String>()
         var usrFragments = Set<String>()
         var nextIsModuleImport = false
         // A cursor info request is expensive, so as few tokens as possible get one.
         var shortcuts = moduleToLog == nil
-            ? ImportUsageShortcuts(file: self, compilerArguments: compilerArguments, currentModule: currentModule)
+            ? ImportUsageShortcuts(file: self, compilerArguments: compilerArguments)
             : ImportUsageShortcuts()
         for token in syntaxMap.tokens {
             guard let tokenKind = token.kind else {

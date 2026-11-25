@@ -73,11 +73,11 @@ struct AnalyzerRequestTests {
         let cursorInfoRequests = requests { _ = linter.collect(into: RuleStorage()) }
             .count { $0.name == "source.request.cursorinfo" }
 
-        // The file has 36 tokens that can refer to a module. Only four of them need a request: `Foundation`, the
-        // first `Int`, the first `+` and the first use of `sum`. Declaration names, local variables, argument
-        // labels and repeated references need none. Other tests may have asked for `Int` and `+` already.
-        #expect(cursorInfoRequests >= 1)
-        #expect(cursorInfoRequests <= 4)
+        // The file has 36 tokens that can refer to a module. Only five of them need a request: `Foundation`, the
+        // name `sum` in its declaration (which tells how SourceKit names the module being compiled), the first
+        // `Int`, the first `+` and the first use of `sum`. Other declaration names, local variables, argument
+        // labels and repeated references need none.
+        #expect(cursorInfoRequests == 5)
     }
 
     @Test

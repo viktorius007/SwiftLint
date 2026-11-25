@@ -10,8 +10,9 @@ import SwiftSyntax
 /// for a whole file at once, make most of these requests unnecessary:
 ///
 /// - A token that names a declaration of the file, or that refers to a local variable, belongs to the module being
-///   compiled.
-/// - An argument label of a call refers to the called function, which the token of its name refers to as well.
+///   compiled. How SourceKit names that module is learned from the first such token.
+/// - An argument label of a call to a function refers to that function, which the token of its name refers to as
+///   well.
 /// - The cursor info at a position is determined by the declarations that SourceKit's index lists there. So two
 ///   positions with the same declarations give the same answer.
 struct ImportUsageShortcuts {
@@ -19,23 +20,48 @@ struct ImportUsageShortcuts {
     struct SymbolUsage {
         /// The modules of the symbols at the position.
         let modules: Set<String>
-        /// Whether one of the symbols is a function, an initializer or an enum case. The argument labels of a call
-        /// refer to that same symbol.
-        let isCallable: Bool
+        /// Whether one of the symbols is a function or an initializer. The argument labels of a call refer to that
+        /// same symbol. An enum case does not count: a call on a case without values calls the value itself.
+        let isFunction: Bool
+        /// Whether the position holds a single declaration and nothing else.
+        let isSingleDeclaration: Bool
 
         init(modules: Set<String>, kinds: [String]) {
             self.modules = modules
-            isCallable = kinds.contains {
-                $0.hasPrefix("source.lang.swift.ref.function.") || $0 == "source.lang.swift.ref.enumelement"
-            }
+            isFunction = kinds.contains { $0.hasPrefix("source.lang.swift.ref.function.") }
+            isSingleDeclaration = kinds.count == 1 && kinds[0].hasPrefix("source.lang.swift.decl.")
         }
     }
 
-    /// The usage at a position, by the declarations at that position. Shared by all files, because the module of
-    /// a Swift declaration does not depend on the file using it.
-    private final class SharedUsages: @unchecked Sendable {
+    /// What was learned about one module, shared by all of its files.
+    ///
+    /// Within one module a Swift USR names one declaration, and the module of a declaration does not depend on the
+    /// file using it. Across modules that does not hold: two modules with the same ABI name give equal USRs to
+    /// different declarations.
+    private final class ModuleKnowledge: @unchecked Sendable {
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var knowledgeByCompilerArguments = [[String]: ModuleKnowledge]()
+
         private let lock = NSLock()
         private var usagesByUSRs = [[String]: SymbolUsage]()
+        private var modulesOfOwnDeclarations: Set<String>?
+
+        /// The modules SourceKit reports for a declaration of the module being compiled.
+        var ownModules: Set<String>? {
+            get { lock.withLock { modulesOfOwnDeclarations } }
+            set { lock.withLock { modulesOfOwnDeclarations = newValue } }
+        }
+
+        static func ofModule(compiledWith compilerArguments: [String]) -> ModuleKnowledge {
+            lock.withLock {
+                if let knowledge = knowledgeByCompilerArguments[compilerArguments] {
+                    return knowledge
+                }
+                let knowledge = ModuleKnowledge()
+                knowledgeByCompilerArguments[compilerArguments] = knowledge
+                return knowledge
+            }
+        }
 
         subscript(usrs: [String]) -> SymbolUsage? {
             get { lock.withLock { usagesByUSRs[usrs] } }
@@ -43,12 +69,9 @@ struct ImportUsageShortcuts {
         }
     }
 
-    private static let usagesOfSwiftDeclarations = SharedUsages()
-
-    /// The module being compiled.
-    private var currentModule: String?
+    private var module: ModuleKnowledge?
     /// The positions of the tokens that belong to the module being compiled.
-    private var offsetsInCurrentModule = Set<ByteCount>()
+    private var offsetsInOwnModule = Set<ByteCount>()
     /// The position of the name of the called function, for the position of each argument label of a call.
     private var calleeOffsetsByLabelOffset = [ByteCount: ByteCount]()
     /// The USRs of all declarations that SourceKit's index lists at a position, declared or referenced, in a
@@ -64,16 +87,14 @@ struct ImportUsageShortcuts {
     ///
     /// - parameter file:              The file.
     /// - parameter compilerArguments: The compiler arguments needed to compile the file.
-    /// - parameter currentModule:     The module being compiled, if known.
-    init(file: SwiftLintFile, compilerArguments: [String], currentModule: String?) {
-        self.currentModule = currentModule
+    init(file: SwiftLintFile, compilerArguments: [String]) {
+        module = .ofModule(compiledWith: compilerArguments)
         let collector = TokenCollector(viewMode: .sourceAccurate)
         collector.walk(file.syntaxTree)
         calleeOffsetsByLabelOffset = collector.calleeOffsetsByLabelOffset
-        if currentModule != nil {
-            offsetsInCurrentModule = collector.declarationNameOffsets
-                .union(file.localVariableReferenceOffsets(compilerArguments: compilerArguments))
-        }
+        offsetsInOwnModule = collector.declarationNameOffsets
+            .union(file.localVariableReferenceOffsets(compilerArguments: compilerArguments))
+            .subtracting(collector.offsetsReferringToShadowedDeclarations)
         usrsByOffset = file.indexedUSRsByOffset(compilerArguments: compilerArguments)
     }
 
@@ -84,10 +105,10 @@ struct ImportUsageShortcuts {
     ///
     /// - returns: The modules, or `nil` if a cursor info request is needed.
     func knownModules(at offset: ByteCount) -> Set<String>? {
-        if let currentModule, offsetsInCurrentModule.contains(offset) {
-            return [currentModule]
+        if offsetsInOwnModule.contains(offset) {
+            return module?.ownModules
         }
-        if let calleeOffset = calleeOffsetsByLabelOffset[offset], usage(at: calleeOffset)?.isCallable == true {
+        if let calleeOffset = calleeOffsetsByLabelOffset[offset], usage(at: calleeOffset)?.isFunction == true {
             // The token of the callee comes first and has added the modules already.
             return []
         }
@@ -99,20 +120,26 @@ struct ImportUsageShortcuts {
     /// - parameter usage:  The result of the request.
     /// - parameter offset: The position of the token.
     mutating func remember(_ usage: SymbolUsage, at offset: ByteCount) {
+        if offsetsInOwnModule.contains(offset) {
+            if usage.isSingleDeclaration, usage.modules.count == 1 {
+                module?.ownModules = usage.modules
+            }
+            return
+        }
         guard let usrs = usrsByOffset[offset] else {
             return
         }
-        // Only a Swift USR names the module of its declaration. A C declaration can be declared in several
+        // Only a Swift USR names its declaration within the module. A C declaration can be declared in several
         // modules, and which of them a file sees depends on its imports.
         if usrs.allSatisfy({ $0.hasPrefix("s:") }) {
-            Self.usagesOfSwiftDeclarations[usrs] = usage
+            module?[usrs] = usage
         } else {
             usagesInThisFile[usrs] = usage
         }
     }
 
     private func usage(at offset: ByteCount) -> SymbolUsage? {
-        usrsByOffset[offset].flatMap { usagesInThisFile[$0] ?? Self.usagesOfSwiftDeclarations[$0] }
+        usrsByOffset[offset].flatMap { usagesInThisFile[$0] ?? module?[$0] }
     }
 }
 
@@ -139,21 +166,35 @@ private extension SwiftLintFile {
         })
     }
 
+    /// Returns the USRs that SourceKit's index lists at the position of a token, for every position where the
+    /// text of the file matches the name of one of the listed declarations.
+    ///
+    /// The index gives lines and columns. The name check guards against a position computed from them that is not
+    /// the one SourceKit meant.
     func indexedUSRsByOffset(compilerArguments: [String]) -> [ByteCount: [String]] {
         guard let index = index(compilerArguments: compilerArguments) else {
             return [:]
         }
+        let bytes = Array(contents.utf8)
+        let converter = locationConverter
         var usrsByOffset = [ByteCount: Set<String>]()
+        var offsetsWithMatchingName = Set<ByteCount>()
         _ = index.traverseEntitiesDepthFirst { _, entity -> Void? in
-            if let usr = entity.value["key.usr"] as? String,
-               let line = entity.line,
-               let column = entity.column,
-               let offset = stringView.byteOffset(forLine: line, bytePosition: column) {
-                usrsByOffset[offset, default: []].insert(usr)
+            guard let usr = entity.value["key.usr"] as? String,
+                  let line = entity.line,
+                  let column = entity.column else {
+                return nil
+            }
+            // The converter counts lines like the compiler does, also for files with carriage returns.
+            let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
+            usrsByOffset[ByteCount(offset), default: []].insert(usr)
+            if let name = entity.name?.prefix(while: { $0 != "(" }).utf8, name.isNotEmpty,
+               bytes.dropFirst(offset).starts(with: name) {
+                offsetsWithMatchingName.insert(ByteCount(offset))
             }
             return nil
         }
-        return usrsByOffset.mapValues { $0.sorted() }
+        return usrsByOffset.filter { offsetsWithMatchingName.contains($0.key) }.mapValues { $0.sorted() }
     }
 }
 
@@ -161,6 +202,9 @@ private extension SwiftLintFile {
 private final class TokenCollector: SyntaxVisitor {
     private(set) var declarationNameOffsets = Set<ByteCount>()
     private(set) var calleeOffsetsByLabelOffset = [ByteCount: ByteCount]()
+    /// The positions of names that declare a variable and at the same time refer to another one of the same name,
+    /// which can come from any module: the shorthand `if let value` and the items of a closure's capture list.
+    private(set) var offsetsReferringToShadowedDeclarations = Set<ByteCount>()
 
     override func visitPost(_ node: LabeledExprSyntax) {
         guard let label = offset(ofIdentifier: node.label),
@@ -172,12 +216,19 @@ private final class TokenCollector: SyntaxVisitor {
     }
 
     override func visitPost(_ node: IdentifierPatternSyntax) {
-        // The shorthand `if let value` declares a variable and refers to another one of the same name, which can
-        // come from any module.
         if let binding = node.parent?.as(OptionalBindingConditionSyntax.self), binding.initializer == nil {
+            if let offset = offset(ofIdentifier: node.identifier) {
+                offsetsReferringToShadowedDeclarations.insert(offset)
+            }
             return
         }
         collect(node.identifier)
+    }
+
+    override func visitPost(_ node: ClosureCaptureSyntax) {
+        if let offset = offset(ofIdentifier: node.name) {
+            offsetsReferringToShadowedDeclarations.insert(offset)
+        }
     }
 
     override func visitPost(_ node: FunctionParameterSyntax) {
