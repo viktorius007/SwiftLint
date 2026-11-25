@@ -69,6 +69,52 @@ struct UnusedDeclarationUsageTests {
         ])
     }
 
+    // The compiler leaves an extension without members out of the index if it conforms through a composition.
+    @Test(.temporaryDirectory, arguments: ["Shelf & Tagged", "TaggedShelf"])
+    func witnessCanSatisfyAConformanceThatIsMissingFromTheIndex(inherited: String) throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            protocol Shelf {
+                func take() -> Int
+                static var capacity: Int { get }
+            }
+
+            protocol Tagged: Named {}
+
+            protocol Named {
+                var label: String { get }
+            }
+
+            typealias TaggedShelf = Shelf & Tagged
+
+            func ↓inspect(_ shelf: some TaggedShelf) -> Int {
+                shelf.take() + shelf.label.count + type(of: shelf).capacity + Rack().take() + Crate().label.count
+            }
+            """,
+            """
+            extension Rack {
+                func take() -> Int { 1 }
+                static var capacity: Int { 2 }
+                var label: String { "rack" }
+                func ↓dust() {}
+                var ↓capacity: Int { 3 }
+            }
+
+            extension Crate {
+                func ↓take() -> Int { 4 }
+                var label: String { "crate" }
+            }
+            """,
+            """
+            struct Rack {}
+
+            struct Crate {}
+
+            extension Rack: \(inherited) {}
+            """,
+        ])
+    }
+
     @Test(.temporaryDirectory)
     func entryPointIsFoundInWhatTheMainTypeInheritsFrom() throws {
         try expectOnlyMarkedDeclarationsReported(

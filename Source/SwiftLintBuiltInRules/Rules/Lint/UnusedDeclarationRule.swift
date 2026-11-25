@@ -134,7 +134,9 @@ private extension SwiftLintFile {
             declared?.member = member
             return declared
         }
-        return (Set(declared), collector.facts)
+        var typeFacts = collector.facts
+        typeFacts.conformancesMissingFromIndex = conformancesMissingFromIndex(index)
+        return (Set(declared), typeFacts)
     }
 
     func declaredUSR(indexEntity: SourceKittenDictionary,
