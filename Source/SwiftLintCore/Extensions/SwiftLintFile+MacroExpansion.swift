@@ -14,10 +14,12 @@ public extension SwiftLintFile {
     /// Expanding the macros of Swift Testing and type-checking what they expand to takes several times as long
     /// as type-checking the test file as written, and the compiler has no option that turns a macro off. No macro
     /// of Swift Testing declares a name, so the written code cannot refer to anything in an expansion. An
-    /// expansion refers to written code that is no argument of its macro in one way: it calls members of the types
-    /// of Swift Testing whose names start with `__`, and an extension of such a type can declare one of them
-    /// (see `UnusedDeclarationUsage`). With the returned arguments, the compiler reports an error at every use of
-    /// such a macro and goes on, and SourceKit prints these errors for an index request.
+    /// expansion refers to written code that is no argument of its macro in these ways: it names the declaration
+    /// that carries the attribute; for a test in a type, it names that type by all types it is nested in, and
+    /// calls its `init()` if the test is an instance method; and it calls members of the types of Swift Testing
+    /// whose names start with `__`, of which an extension of such a type can declare one (see
+    /// `UnusedDeclarationUsage`). With the returned arguments, the compiler reports an error at every use of such
+    /// a macro and goes on, and SourceKit prints these errors for an index request.
     ///
     /// A file that gets Swift Testing without importing it, through another module that exports it, keeps its
     /// arguments.
