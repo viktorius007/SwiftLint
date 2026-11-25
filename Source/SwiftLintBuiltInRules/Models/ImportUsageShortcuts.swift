@@ -10,11 +10,15 @@ import SwiftSyntax
 /// for a whole file at once, make most of these requests unnecessary:
 ///
 /// - A token that names a declaration of the file, or that refers to a local variable, belongs to the module being
-///   compiled. How SourceKit names that module is learned from the first such token.
+///   compiled. Once one such token of the file got a request, the others add nothing new.
 /// - An argument label of a call to a function refers to that function, which the token of its name refers to as
 ///   well.
 /// - The cursor info at a position is determined by the declarations that SourceKit's index lists there. So two
 ///   positions with the same declarations give the same answer.
+///
+/// Known limit: a module built with `-module-abi-name` set to the name of another module gives its declarations
+/// the USRs that the other module would give to declarations of the same name. If a file uses both, the second
+/// one gets the answer of the first.
 struct ImportUsageShortcuts {
     /// What the cursor info at a position says, as far as the rule needs it.
     struct SymbolUsage {
@@ -34,23 +38,12 @@ struct ImportUsageShortcuts {
     }
 
     /// What was learned about one module, shared by all of its files.
-    ///
-    /// Within one module a Swift USR names one declaration, and the module of a declaration does not depend on the
-    /// file using it. Across modules that does not hold: two modules with the same ABI name give equal USRs to
-    /// different declarations.
     private final class ModuleKnowledge: @unchecked Sendable {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var knowledgeByCompilerArguments = [[String]: ModuleKnowledge]()
 
         private let lock = NSLock()
         private var usagesByUSRs = [[String]: SymbolUsage]()
-        private var modulesOfOwnDeclarations: Set<String>?
-
-        /// The modules SourceKit reports for a declaration of the module being compiled.
-        var ownModules: Set<String>? {
-            get { lock.withLock { modulesOfOwnDeclarations } }
-            set { lock.withLock { modulesOfOwnDeclarations = newValue } }
-        }
 
         static func ofModule(compiledWith compilerArguments: [String]) -> ModuleKnowledge {
             lock.withLock {
@@ -72,6 +65,9 @@ struct ImportUsageShortcuts {
     private var module: ModuleKnowledge?
     /// The positions of the tokens that belong to the module being compiled.
     private var offsetsInOwnModule = Set<ByteCount>()
+    /// Whether a request for one of these tokens returned a declaration, and with it the module being compiled.
+    /// A file can consist of code that is compiled out, where no such token has a symbol.
+    private var hasSeenOwnDeclaration = false
     /// The position of the name of the called function, for the position of each argument label of a call.
     private var calleeOffsetsByLabelOffset = [ByteCount: ByteCount]()
     /// The USRs of all declarations that SourceKit's index lists at a position, declared or referenced, in a
@@ -106,7 +102,7 @@ struct ImportUsageShortcuts {
     /// - returns: The modules, or `nil` if a cursor info request is needed.
     func knownModules(at offset: ByteCount) -> Set<String>? {
         if offsetsInOwnModule.contains(offset) {
-            return module?.ownModules
+            return hasSeenOwnDeclaration ? [] : nil
         }
         if let calleeOffset = calleeOffsetsByLabelOffset[offset], usage(at: calleeOffset)?.isFunction == true {
             // The token of the callee comes first and has added the modules already.
@@ -121,20 +117,41 @@ struct ImportUsageShortcuts {
     /// - parameter offset: The position of the token.
     mutating func remember(_ usage: SymbolUsage, at offset: ByteCount) {
         if offsetsInOwnModule.contains(offset) {
-            if usage.isSingleDeclaration, usage.modules.count == 1 {
-                module?.ownModules = usage.modules
+            if usage.isSingleDeclaration, usage.modules.isNotEmpty {
+                hasSeenOwnDeclaration = true
             }
             return
         }
         guard let usrs = usrsByOffset[offset] else {
             return
         }
-        // Only a Swift USR names its declaration within the module. A C declaration can be declared in several
-        // modules, and which of them a file sees depends on its imports.
-        if usrs.allSatisfy({ $0.hasPrefix("s:") }) {
+        let swiftUSRs = usrs.filter { $0.hasPrefix("s:") }
+        // A module built with `-module-abi-name` gives its declarations USRs that do not name it, and that a
+        // declaration of another module can have as well. Such a result is not reused at all.
+        guard swiftUSRs.allSatisfy({ usr in usage.modules.contains { Self.usr(usr, names: $0) } }) else {
+            return
+        }
+        // A C declaration can be declared in several modules, and which of them a file sees depends on its
+        // imports. So a result for one is reused within the file only.
+        if swiftUSRs.count == usrs.count {
             module?[usrs] = usage
         } else {
             usagesInThisFile[usrs] = usage
+        }
+    }
+
+    /// Whether a Swift USR starts with the name of a module, the way the USR of a declaration of that module does.
+    private static func usr(_ usr: String, names module: String) -> Bool {
+        switch module {
+        case "Swift":
+            // The standard library is abbreviated.
+            return usr.hasPrefix("s:s") || usr.hasPrefix("s:S")
+        case "_Concurrency":
+            return usr.hasPrefix("s:Sc")
+        default:
+            let mangledModule = "\(module.utf8.count)\(module)"
+            // The second form is a member of an extension that the module declares for a type of another module.
+            return usr.hasPrefix("s:" + mangledModule) || usr.contains(mangledModule + "E")
         }
     }
 
