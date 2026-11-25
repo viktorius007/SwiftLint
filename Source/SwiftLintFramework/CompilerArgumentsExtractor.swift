@@ -4,13 +4,14 @@ struct CompilerArgumentsExtractor {
     static func allCompilerInvocations(compilerLogs: String) -> [[String]] {
         var compilerInvocations = [[String]]()
         compilerLogs.enumerateLines { line, _ in
-            if let swiftcIndex = line.range(of: "swiftc ")?.upperBound, line.contains(" -module-name ") {
-                // A response file is not written by the build tool, so it has none of the log's escapes.
-                let invocation = parseCLIArguments(String(line[swiftcIndex...]))
-                    .removingEscapesOfBuildLogs
-                    .expandingResponseFiles
-                    .removingArgumentsThatSourceKitRejects
-                compilerInvocations.append(invocation)
+            guard let swiftcIndex = line.range(of: "swiftc ")?.upperBound else {
+                return
+            }
+            let invocation = parseCLIArguments(String(line[swiftcIndex...]))
+                .expandingResponseFilesOfABuildLog
+            // The module name can come from a response file.
+            if invocation.contains("-module-name") {
+                compilerInvocations.append(invocation.removingArgumentsThatSourceKitRejects)
             }
         }
         return compilerInvocations
@@ -19,6 +20,11 @@ struct CompilerArgumentsExtractor {
 
 // MARK: - Private
 
+/// Stands for a backslash inside quotes in what `parseCLIArguments` returns.
+private let quotedBackslashPlaceholder = "\u{1}"
+
+/// Splits a line of a build log into arguments. A backslash inside quotes is returned as
+/// `quotedBackslashPlaceholder`.
 private func parseCLIArguments(_ string: String) -> [String] {
     let escapedSpacePlaceholder = "\u{0}"
     let scanner = Scanner(string: string)
@@ -27,6 +33,7 @@ private func parseCLIArguments(_ string: String) -> [String] {
     while let result = scanner.scanUpToString("\"") {
         if didStart {
             str += result.replacingOccurrences(of: " ", with: escapedSpacePlaceholder)
+                .replacingOccurrences(of: "\\", with: quotedBackslashPlaceholder)
             str += " "
         } else {
             // `swift build -v` escapes the `#` between a macro plugin's path and the path of its server.
@@ -95,11 +102,25 @@ private func partiallyFilter(arguments args: [String]) -> ([String], Bool) {
 }
 
 extension Array where Element == String {
-    /// Return the full list of compiler arguments, replacing any response files with their contents.
-    fileprivate var expandingResponseFiles: [String] {
-        expandingResponseFiles(within: [])
+    /// These arguments of a build log's line as the compiler gets them: without the escapes of the log, and with
+    /// the contents of each response file in its place. A response file is not written by the build tool, so it
+    /// has none of the log's escapes.
+    fileprivate var expandingResponseFilesOfABuildLog: [String] {
+        flatMap { argument -> [String] in
+            guard argument.starts(with: "@") else {
+                return [argument.replacingOccurrences(of: quotedBackslashPlaceholder, with: "\\")]
+                    .removingEscapesOfBuildLogs
+            }
+            // The shell that the log is written for passes a backslash inside quotes on as it is. The path of a
+            // response file is opened, so it has to be the one that the compiler got.
+            return [argument].removingEscapesOfBuildLogs
+                .map { $0.replacingOccurrences(of: quotedBackslashPlaceholder, with: "\\") }
+                .expandingResponseFiles(within: [])
+        }
     }
 
+    /// Returns the arguments with the contents of each response file in its place.
+    ///
     /// - parameter openFiles: The response files that are being expanded, each by its absolute path without `.`
     ///                        and `..`. Like the compiler, this leaves out one of them that it meets again.
     private func expandingResponseFiles(within openFiles: Set<String>) -> [String] {
@@ -107,8 +128,11 @@ extension Array where Element == String {
             guard arg.starts(with: "@") else {
                 return [arg]
             }
+            // Like the compiler, this takes `.` and `..` out of the path before it opens the file, so that a
+            // symbolic link before `..` is not followed.
             let responseFile = URL(filePath: String(arg.dropFirst()), directoryHint: .notDirectory)
-            let path = responseFile.standardizedFileURL.path
+                .absoluteURL.standardized
+            let path = responseFile.path
             guard !openFiles.contains(path) else {
                 return []
             }

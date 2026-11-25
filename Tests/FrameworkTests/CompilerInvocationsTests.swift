@@ -111,6 +111,54 @@ struct CompilerInvocationsTests {
         #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == ["A.swift", "B.swift"])
     }
 
+    // The compiler takes `.` and `..` out of the path and opens what is left. So it never looks for the
+    // directory before `..`, and it does not follow that directory if it is a symbolic link.
+    @Test(.temporaryDirectory, arguments: ["missing", "link"])
+    func responseFileIsOpenedByItsPathWithoutParentDirectories(directory: String) throws {
+        let linked = URL.cwd.appending(path: "linked/inner", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: linked, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: URL.cwd.appending(path: "link"), withDestinationURL: linked)
+        try "Named.swift\n".write(to: URL.cwd.appending(path: "arguments.rsp"), atomically: true, encoding: .utf8)
+        try "Linked.swift\n"
+            .write(to: URL.cwd.appending(path: "linked/arguments.rsp"), atomically: true, encoding: .utf8)
+        let log = "swiftc -module-name Sample @\(URL.cwd.filepath)/\(directory)/../arguments.rsp"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == ["Named.swift"])
+    }
+
+    @Test(.temporaryDirectory)
+    func lineWithItsModuleNameInAResponseFileIsAnInvocation() throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try "-module-name\nSample\nA.swift\n".write(to: responseFile, atomically: true, encoding: .utf8)
+        let log = """
+            swiftc @\(responseFile.filepath)
+            swiftc --version
+            """
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+    }
+
+    // In a shell, `\=` is `=` outside of quotes, and it is both characters inside of them.
+    @Test(.temporaryDirectory, arguments: [
+        (#"@%@/escaped\=arguments.rsp"#, "Unquoted.swift"),
+        (#""@%@/escaped\=arguments.rsp""#, "Quoted.swift"),
+    ])
+    func pathOfAResponseFileKeepsItsBackslashInsideQuotesOnly(argument: String, file: String) throws {
+        try "Unquoted.swift\n"
+            .write(to: URL.cwd.appending(path: "escaped=arguments.rsp"), atomically: true, encoding: .utf8)
+        try "Quoted.swift\n"
+            .write(to: URL.cwd.appending(path: #"escaped\=arguments.rsp"#), atomically: true, encoding: .utf8)
+        let log = "swiftc -module-name Sample " + argument.replacingOccurrences(of: "%@", with: URL.cwd.filepath)
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == [file])
+    }
+
     // The compiler keeps a byte order mark as part of the first argument, and it replaces bytes that are not
     // UTF-8.
     @Test(.temporaryDirectory, arguments: [
