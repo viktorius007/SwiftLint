@@ -150,6 +150,29 @@ struct UnusedDeclarationSwiftTestingTests {
         ])
     }
 
+    // At the name of the type alias, SourceKit tells about the alias and its module. It is asked about the type.
+    @Test(.temporaryDirectory)
+    func memberAddedToATypeOfSwiftTestingThroughATypeAliasIsUsed() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            typealias Location = SourceLocation
+
+            extension Location {
+                static func __here() -> Self {
+                    Self(fileID: "Sample/Test.swift", filePath: "/Test.swift", line: 1, column: 1)
+                }
+                static func ↓leftover() {}
+            }
+
+            @Test func succeeds() {
+                #expect(Location.self == SourceLocation.self)
+            }
+            """,
+        ])
+    }
+
     @Test(.temporaryDirectory)
     func referenceToATypeOfSwiftTestingMarksNothing() throws {
         try expectOnlyMarkedDeclarationsReported(in: [

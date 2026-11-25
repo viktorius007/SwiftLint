@@ -14,6 +14,8 @@ extension UnusedDeclarationUsage {
         private let isInitializedConstant: (SourceKittenDictionary) -> Bool
         /// Asks SourceKit for the name of the module that declares what is referred to at the entity's position.
         private let moduleName: (SourceKittenDictionary) -> String?
+        /// Asks SourceKit for the name of the module that declares the type with the given USR.
+        private let moduleNameOfType: (String) -> String?
         /// For each USR that SourceKit was asked about: whether Swift Testing declares it.
         private var declaredBySwiftTesting = [String: Bool]()
 
@@ -22,11 +24,13 @@ extension UnusedDeclarationUsage {
         init(conformancesMissingFromIndex: [String: Set<String>],
              overridden: @escaping (SourceKittenDictionary) -> [String],
              isInitializedConstant: @escaping (SourceKittenDictionary) -> Bool,
-             moduleName: @escaping (SourceKittenDictionary) -> String?) {
+             moduleName: @escaping (SourceKittenDictionary) -> String?,
+             moduleNameOfType: @escaping (String) -> String?) {
             facts.conformancesMissingFromIndex = conformancesMissingFromIndex
             self.overridden = overridden
             self.isInitializedConstant = isInitializedConstant
             self.moduleName = moduleName
+            self.moduleNameOfType = moduleNameOfType
         }
 
         /// Notes what the entity tells about types.
@@ -49,7 +53,7 @@ extension UnusedDeclarationUsage {
                 noteGeneratedCode(of: owner, replacedBy: entity)
             }
             if let owner, entity.name?.hasPrefix("__") == true, let usr = entity.usr,
-               isDeclaredBySwiftTesting(owner, referredToAtPositionOf: parent) {
+               isDeclaredBySwiftTesting(owner, referredToAtPositionOf: nil) {
                 facts.runBySwiftTesting.insert(usr)
             }
             guard let name = entity.memberName else {
@@ -150,13 +154,16 @@ extension UnusedDeclarationUsage {
         /// Swift Testing of a toolchain for macOS is. SourceKit tells the module's own name.
         ///
         /// - parameter usr:    USR of a macro or a type.
-        /// - parameter entity: An entity at the position of a reference to it, or of its declaration.
+        /// - parameter entity: For a macro, an entity at the position of a reference to it: SourceKit finds no
+        ///                     macro by its USR. Nil for a type: at the position of a reference to it, SourceKit
+        ///                     can tell about a type alias that stands for it instead.
         private mutating func isDeclaredBySwiftTesting(_ usr: String,
-                                                       referredToAtPositionOf entity: SourceKittenDictionary) -> Bool {
+                                                       referredToAtPositionOf entity: SourceKittenDictionary?) -> Bool {
             if let known = declaredBySwiftTesting[usr] {
                 return known
             }
-            let isDeclared = moduleName(entity) == UnusedDeclarationUsage.swiftTesting
+            let module = if let entity { moduleName(entity) } else { moduleNameOfType(usr) }
+            let isDeclared = module == UnusedDeclarationUsage.swiftTesting
             declaredBySwiftTesting[usr] = isDeclared
             return isDeclared
         }

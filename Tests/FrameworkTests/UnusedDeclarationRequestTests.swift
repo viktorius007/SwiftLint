@@ -72,6 +72,7 @@ struct UnusedDeclarationRequestTests {
                 public struct Wrapped<Value> { public init() {} }
                 public protocol Inbound: Decodable {}
                 public typealias Both = Inbound & Sendable
+                public typealias Word = Int
                 """
         )
         let sources = [
@@ -98,9 +99,11 @@ struct UnusedDeclarationRequestTests {
 
             typealias Numbers = Wrapped<Model>
 
+            typealias Count = Word
+
             @main
             struct Entry {
-                static func main() { print(Model.self, Child(), Numbers(), Mine.self) }
+                static func main() { print(Model.self, Child(), Numbers(), Mine.self, Count.self) }
             }
             """,
         ]
@@ -112,10 +115,11 @@ struct UnusedDeclarationRequestTests {
         })
 
         // The index tells that `Parent` is a class and `Wrapped` a struct, and `Local` is declared by a file.
-        // What `Encodable`, `Decodable` and `Sendable` inherit from is known.
+        // What `Encodable`, `Decodable` and `Sendable` inherit from is known. SourceKit tells that `Word` stands
+        // for a struct.
         let asked = requests.all.filter { $0.contains("source.request.cursorinfo") && $0.contains("key.usr:") }
         #expect(asked.compactMap { $0.firstMatch(of: #/key\.usr: "([^"]*)"/#).map { String($0.output.1) } }.sorted()
-                == ["s:6Vendor4Botha", "s:6Vendor7InboundP"])
+                == ["s:6Vendor4Botha", "s:6Vendor4Worda", "s:6Vendor7InboundP"])
         // One file asks for all, and SourceKit is told to drop what it built for the questions.
         let askingFiles = Set(asked.compactMap { $0.firstMatch(of: #/key\.sourcefile: "([^"]*)"/#)?.output.1 })
         #expect(askingFiles.map { $0.hasSuffix("Input0.swift") } == [true])

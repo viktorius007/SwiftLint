@@ -37,6 +37,9 @@
 // shares its name and labels with a used one of the same type, also where a constraint of its extension rules
 // it out. Whatever a type alias mentions counts as inherited by it, also the generic argument in
 // `typealias A = B<C>`.
+//
+// A declaration is known by its USR in all files together. Two modules with one name, each seen by other files
+// of one run, have the same USRs, so what SourceKit tells about a protocol of the one counts for the other too.
 
 /// Everything that all files together use.
 struct UnusedDeclarationUsage {

@@ -32,6 +32,15 @@ struct UnusedImportEquivalenceTests {
         #expect(findings.map(\.reason) == ["Missing import for referenced module 'Advertised'"])
     }
 
+    // The helper names the module before these options, and the compiler takes the last name.
+    @Test(.temporaryDirectory, arguments: [["-module-name=Joined"], ["-module-name=First", "-module-name", "Last"]])
+    func ownModuleIsTheOneThatTheLastOptionNames(flags: [String]) throws {
+        let linter = try makeLinter(source: "let value = 1\n", compilerFlags: flags, requireExplicitImports: true)
+        let storage = RuleStorage()
+
+        #expect(linter.collect(into: storage).styleViolations(using: storage).isEmpty)
+    }
+
     @Test(.temporaryDirectory)
     func fileWithOnlyInactiveCodeUsesNoModule() throws {
         let linters = try makeLinters(

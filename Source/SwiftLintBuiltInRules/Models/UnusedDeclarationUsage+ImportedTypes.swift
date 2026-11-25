@@ -2,15 +2,22 @@ import SourceKittenFramework
 
 // The index of a file tells what a type inherits from, and not what these inherited types inherit from
 // themselves. For a protocol or a type alias that a linted file declares, that file's index tells. For any
-// other, SourceKit is asked once all files are collected: it prints the declaration with the USR of each type
-// in it.
+// other, SourceKit is asked once all files are collected: it prints the declaration with the kind and the USR
+// of each type in it.
 
 extension UnusedDeclarationUsage {
+    /// What a protocol inherits from, or what a type alias stands for, each by its USR.
+    struct InheritedTypes: Equatable {
+        var all = Set<String>()
+        /// The protocols and type aliases among them. SourceKit is asked about these in turn.
+        var protocolsAndTypeAliases = Set<String>()
+    }
+
     /// What tells about declarations that no linted file declares.
     struct InheritanceSource {
-        /// Returns the USRs of what the protocol or type alias with the given USR inherits from or stands for,
-        /// as the given file with its compiler arguments sees it.
-        var inheritedTypes: (_ usr: String, _ file: SwiftLintFile, _ compilerArguments: [String]) -> Set<String>
+        /// Returns what the protocol or type alias with the given USR inherits from or stands for, as the given
+        /// file with its compiler arguments sees it.
+        var inheritedTypes: (_ usr: String, _ file: SwiftLintFile, _ compilerArguments: [String]) -> InheritedTypes
         /// Called after the last question that is asked through the given file.
         var release: (_ file: SwiftLintFile, _ compilerArguments: [String]) -> Void
 
@@ -64,9 +71,9 @@ extension UnusedDeclarationUsage {
                 }
                 hasAsked = true
                 let ancestors = sourceKit.inheritedTypes(type, asker.file, compilerArguments)
-                if ancestors.isNotEmpty {
-                    inherited[type, default: []].formUnion(ancestors)
-                    typesToAsk.formUnion(ancestors)
+                if ancestors.all.isNotEmpty {
+                    inherited[type, default: []].formUnion(ancestors.all)
+                    typesToAsk.formUnion(ancestors.protocolsAndTypeAliases)
                 }
             }
             if hasAsked {
@@ -83,37 +90,58 @@ extension UnusedDeclarationUsage {
     }
 
     /// Reads what a protocol inherits from, or what a type alias stands for, from SourceKit's cursor info about
-    /// it. SourceKit annotates the declaration: each type is in a tag with the type's USR, and a requirement on
-    /// `Self` is listed among the inherited types.
+    /// it. SourceKit annotates the declaration: each type is in a tag with the type's kind and USR, and a
+    /// requirement on `Self` is listed among the inherited types.
     ///
-    /// - returns: The USRs of these types. None for any other kind of declaration: a class passes its coding on
-    ///            to a subclass as it is, without the stored properties of the subclass.
-    static func inheritedTypes(inCursorInfo cursorInfo: [String: any SourceKitRepresentable]) -> Set<String> {
+    /// - returns: These types. None for any other kind of declaration: a class passes its coding on to a
+    ///            subclass as it is, without the stored properties of the subclass.
+    static func inheritedTypes(inCursorInfo cursorInfo: [String: any SourceKitRepresentable]) -> InheritedTypes {
         let separators = ["source.lang.swift.decl.protocol": " : ", "source.lang.swift.decl.typealias": " = "]
         guard let kind = cursorInfo["key.kind"] as? String, let separator = separators[kind],
-              let declaration = cursorInfo["key.annotated_decl"] as? String else {
-            return []
+              let declaration = cursorInfo["key.fully_annotated_decl"] as? String else {
+            return InheritedTypes()
         }
         // A requirement after `where` is one on an associated type or a generic parameter.
-        let header = declaration[..<(declaration.firstRange(of: " where ")?.lowerBound ?? declaration.endIndex)]
-        // What comes before the separator is the name with the primary associated types or the generic parameters.
+        let header = declaration[..<(declaration.firstRange(of: whereKeyword)?.lowerBound ?? declaration.endIndex)]
+        // What comes before the separator is attributes, the keyword, the type that the declaration is nested in,
+        // and the name with the primary associated types or the generic parameters.
         guard let start = header.firstRange(of: separator)?.upperBound else {
-            return []
+            return InheritedTypes()
         }
-        let inherited = header[start...]
-        return Set(inherited.matches(of: #/ usr="([^"]*)"/#).map { String($0.output.1) })
+        var types = InheritedTypes()
+        for reference in header[start...].matches(of: #/<ref\.([^ >]+) usr="([^"]*)"/#) {
+            let usr = String(reference.output.2)
+            types.all.insert(usr)
+            if reference.output.1 == "protocol" || reference.output.1 == "typealias" {
+                types.protocolsAndTypeAliases.insert(usr)
+            }
+        }
+        return types
     }
+
+    /// The keyword `where` as SourceKit annotates it.
+    private static let whereKeyword = " <syntaxtype.keyword>where</syntaxtype.keyword> "
 }
 
 extension SwiftLintFile {
     /// Asks SourceKit what the protocol or type alias with the given USR inherits from or stands for.
-    ///
-    /// - returns: The USRs of these types.
-    func typesInherited(byDeclarationWithUSR usr: String, compilerArguments: [String]) -> Set<String> {
+    func typesInherited(byDeclarationWithUSR usr: String, compilerArguments: [String])
+        -> UnusedDeclarationUsage.InheritedTypes {
+        cursorInfo(ofDeclarationWithUSR: usr, compilerArguments: compilerArguments)
+            .map(UnusedDeclarationUsage.inheritedTypes(inCursorInfo:)) ?? UnusedDeclarationUsage.InheritedTypes()
+    }
+
+    /// Asks SourceKit for the name of the module that declares the type with the given USR.
+    func moduleName(ofTypeWithUSR usr: String, compilerArguments: [String]) -> String? {
+        cursorInfo(ofDeclarationWithUSR: usr, compilerArguments: compilerArguments)?["key.modulename"] as? String
+    }
+
+    private func cursorInfo(ofDeclarationWithUSR usr: String, compilerArguments: [String])
+        -> [String: any SourceKitRepresentable]? {
         guard let path else {
-            return []
+            return nil
         }
         let request = Request.cursorInfoWithoutSymbolGraph(file: path.filepath, usr: usr, arguments: compilerArguments)
-        return (try? request.sendIfNotDisabled()).map(UnusedDeclarationUsage.inheritedTypes(inCursorInfo:)) ?? []
+        return try? request.sendIfNotDisabled()
     }
 }

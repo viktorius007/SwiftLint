@@ -131,7 +131,8 @@ private extension SwiftLintFile {
             conformancesMissingFromIndex: conformancesMissingFromIndex(index),
             overridden: { [self] in overriddenUSRs(of: $0, compilerArguments: compilerArguments) },
             isInitializedConstant: initializedConstantFinder(),
-            moduleName: { [self] in cursorInfo(atPositionOf: $0, compilerArguments: compilerArguments)?.moduleName }
+            moduleName: { [self] in cursorInfo(atPositionOf: $0, compilerArguments: compilerArguments)?.moduleName },
+            moduleNameOfType: { [self] in moduleName(ofTypeWithUSR: $0, compilerArguments: compilerArguments) }
         )
         let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
             let member = collector.visit(indexEntity, in: parent)

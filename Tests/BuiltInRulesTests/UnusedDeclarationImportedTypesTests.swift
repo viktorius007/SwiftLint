@@ -6,74 +6,136 @@ import Testing
 
 @Suite
 struct UnusedDeclarationImportedTypesTests {
-    private static let sendable = #"<Type usr="s:s8SendableP">Sendable</Type>"#
-    private static let decodable = #"<Type usr="s:Se">Decodable</Type>"#
-    private static let element = #"<Type usr="s:6Vendor6SourceP4Selfxmfp">Self</Type>."#
-        + #"<Type usr="s:ST7ElementQa">Element</Type>"#
-    // Each declaration is what SourceKit prints for it on Swift 6.4.2.
+    private static let sendable = #"<ref.protocol usr="s:s8SendableP">Sendable</ref.protocol>"#
+    private static let decodable = #"<ref.protocol usr="s:Se">Decodable</ref.protocol>"#
+    private static let item = #"<ref.associatedtype usr="s:6Vendor3BoxP4ItemQa">Item</ref.associatedtype>"#
+    private static let key = #"<ref.generic_type_param usr="s:6Vendor5Keyeda3Keyxmfp">Key</ref.generic_type_param>"#
+    /// What SourceKit refers to as a class, a struct or a generic parameter in the declarations below.
+    private static let otherKinds: Set = ["s:6Vendor4RootC", "s:Si", "s:6Vendor5Keyeda3Keyxmfp"]
+    // Each declaration is what SourceKit prints for it on Swift 6.4.2, between the tags of its kind.
     private static let declarations: [(String, String, [String])] = [
-        ("protocol", #"<Declaration>protocol Mid : <Type usr="s:SE">Encodable</Type></Declaration>"#, ["s:SE"]),
         (
             "protocol",
-            #"<Declaration>protocol Outer : \#(sendable), <Type usr="s:6Vendor3MidP">Mid</Type></Declaration>"#,
+            #"\#(keyword("protocol")) <decl.name>Mid</decl.name> : <ref.protocol usr="s:SE">Encodable</ref.protocol>"#,
+            ["s:SE"]
+        ),
+        (
+            "protocol",
+            "\(keyword("protocol")) <decl.name>Outer</decl.name> : \(sendable), "
+                + #"<ref.protocol usr="s:6Vendor3MidP">Mid</ref.protocol>"#,
             ["s:s8SendableP", "s:6Vendor3MidP"]
         ),
         (
             "typealias",
-            "<Declaration>typealias Coding = \(decodable) &amp; \(sendable)</Declaration>",
+            "\(keyword("typealias")) <decl.name>Coding</decl.name> = \(decodable) &amp; \(sendable)",
             ["s:Se", "s:s8SendableP"]
         ),
         (
             "protocol",
-            #"<Declaration>protocol Source : <Type usr="s:ST">Sequence</Type> where \#(element) : \#(decodable)"#
-                + "</Declaration>",
+            #"\#(keyword("protocol")) <decl.name>Source</decl.name> : "#
+                + #"<ref.protocol usr="s:ST">Sequence</ref.protocol>\#(whereSelf(of: "6SourceP"))"#
+                + #"<ref.associatedtype usr="s:ST7ElementQa">Element</ref.associatedtype> : "#
+                + "\(decodable)</decl.generic_type_requirement>",
             ["s:ST"]
         ),
-        ("protocol", "<Declaration>protocol Empty</Declaration>", []),
+        ("protocol", "\(keyword("protocol")) <decl.name>Empty</decl.name>", []),
         // What comes before the colon or the equals sign is the name with its primary associated types or its
         // generic parameters.
         (
             "protocol",
-            #"<Declaration>protocol Boxes&lt;<Type usr="s:6Vendor5BoxesP4ItemQa">Item</Type>&gt;</Declaration>"#,
+            #"\#(keyword("protocol")) <decl.name>Boxes</decl.name>&lt;<decl.generic_type_param "#
+                + #"usr="s:6Vendor5BoxesP4ItemQa"><ref.associatedtype usr="s:6Vendor5BoxesP4ItemQa">Item"#
+                + "</ref.associatedtype></decl.generic_type_param>&gt;",
             []
         ),
         (
             "protocol",
-            #"<Declaration>protocol Tray&lt;<Type usr="s:6Vendor3BoxP4ItemQa">Item</Type>&gt; : "#
-                + #"<Type usr="s:6Vendor3BoxP">Box</Type> where <Type usr="s:6Vendor4TrayP4Selfxmfp">Self</Type>."#
-                + #"<Type usr="s:6Vendor3BoxP4ItemQa">Item</Type> : \#(sendable)</Declaration>"#,
+            #"\#(keyword("protocol")) <decl.name>Tray</decl.name>&lt;<decl.generic_type_param "#
+                + #"usr="s:6Vendor3BoxP4ItemQa">\#(item)</decl.generic_type_param>&gt; : "#
+                + #"<ref.protocol usr="s:6Vendor3BoxP">Box</ref.protocol>\#(whereSelf(of: "4TrayP"))\#(item) : "#
+                + "\(sendable)</decl.generic_type_requirement>",
             ["s:6Vendor3BoxP"]
         ),
         (
             "protocol",
-            #"<Declaration>protocol Hashable : <Type usr="s:SQ">Equatable</Type>, ~Copyable, ~Escapable"#
-                + "</Declaration>",
+            #"\#(keyword("protocol")) <decl.name>Hashable</decl.name> : "#
+                + #"<ref.protocol usr="s:SQ">Equatable</ref.protocol>, ~Copyable, ~Escapable"#,
             ["s:SQ"]
+        ),
+        // An attribute and the type that the declaration is nested in come before the name.
+        (
+            "protocol",
+            #"<syntaxtype.attribute.builtin><syntaxtype.attribute.name>@<ref.class usr="s:ScM">MainActor"#
+                + "</ref.class></syntaxtype.attribute.name></syntaxtype.attribute.builtin> "
+                + #"\#(keyword("protocol")) <decl.name>Main</decl.name> : \#(sendable)"#,
+            ["s:s8SendableP"]
         ),
         (
             "typealias",
-            #"<Declaration>typealias Keyed&lt;Key&gt; = [<Type usr="s:6Vendor5Keyeda3Keyxmfp">Key</Type> : "#
-                + #"<Type usr="s:Si">Int</Type>] where <Type usr="s:6Vendor5Keyeda3Keyxmfp">Key</Type> : "#
-                + #"<Type usr="s:SH">Hashable</Type></Declaration>"#,
+            #"\#(keyword("typealias")) <ref.struct usr="s:6Vendor5OuterV">Outer</ref.struct>."#
+                + #"<decl.name>Inner</decl.name> = <ref.protocol usr="s:SH">Hashable</ref.protocol> &amp; "#
+                + sendable,
+            ["s:SH", "s:s8SendableP"]
+        ),
+        // A struct, a class or a generic parameter that a type alias stands for is no protocol or type alias.
+        (
+            "typealias",
+            #"\#(keyword("typealias")) <decl.name>Keyed</decl.name>&lt;<decl.generic_type_param "#
+                + #"usr="s:6Vendor5Keyeda3Keyxmfp"><decl.generic_type_param.name>Key</decl.generic_type_param.name>"#
+                + #"</decl.generic_type_param>&gt; = [\#(key) : <ref.struct usr="s:Si">Int</ref.struct>] "#
+                + #"\#(keyword("where")) <decl.generic_type_requirement>\#(key) : "#
+                + #"<ref.protocol usr="s:SH">Hashable</ref.protocol></decl.generic_type_requirement>"#,
             ["s:6Vendor5Keyeda3Keyxmfp", "s:Si"]
         ),
+        (
+            "typealias",
+            #"\#(keyword("typealias")) <decl.name>Rooted</decl.name> = <ref.class usr="s:6Vendor4RootC">Root"#
+                + #"</ref.class> &amp; <ref.protocol usr="s:6Vendor3MidP">Mid</ref.protocol>"#,
+            ["s:6Vendor4RootC", "s:6Vendor3MidP"]
+        ),
+        (
+            "typealias",
+            #"\#(keyword("typealias")) <decl.name>Qualified</decl.name> = "#
+                + #"<ref.typealias usr="s:s7Codablea">Codable</ref.typealias>"#,
+            ["s:s7Codablea"]
+        ),
         // A class passes its coding on to a subclass as it is, without the stored properties of the subclass.
-        ("class", #"<Declaration>class Base : <Type usr="s:s7Codablea">Codable</Type></Declaration>"#, []),
-        ("struct", "<Declaration>struct Value : \(decodable)</Declaration>", []),
+        (
+            "class",
+            #"\#(keyword("class")) <decl.name>Base</decl.name> : "#
+                + #"<ref.typealias usr="s:s7Codablea">Codable</ref.typealias>"#,
+            []
+        ),
+        ("struct", "\(keyword("struct")) <decl.name>Value</decl.name> : \(decodable)", []),
     ]
 
     @Test(arguments: declarations)
     func inheritedTypesAreTheOnesOfAProtocolOrATypeAliasBeforeItsRequirements(
         kind: String, declaration: String, inherited: [String]
     ) {
-        let cursorInfo = ["key.kind": "source.lang.swift.decl.\(kind)", "key.annotated_decl": declaration]
-        #expect(UnusedDeclarationUsage.inheritedTypes(inCursorInfo: cursorInfo) == Set(inherited))
+        let cursorInfo = [
+            "key.kind": "source.lang.swift.decl.\(kind)",
+            "key.fully_annotated_decl": "<decl.\(kind)>\(declaration)</decl.\(kind)>",
+        ]
+        let expected = UnusedDeclarationUsage.InheritedTypes(
+            all: Set(inherited), protocolsAndTypeAliases: Set(inherited).subtracting(Self.otherKinds)
+        )
+        #expect(UnusedDeclarationUsage.inheritedTypes(inCursorInfo: cursorInfo) == expected)
+    }
+
+    private static func keyword(_ keyword: String) -> String {
+        "<syntaxtype.keyword>\(keyword)</syntaxtype.keyword>"
+    }
+
+    private static func whereSelf(of mangledProtocol: String) -> String {
+        " \(keyword("where")) <decl.generic_type_requirement><ref.generic_type_param "
+            + #"usr="s:6Vendor\#(mangledProtocol)4Selfxmfp">Self</ref.generic_type_param>."#
     }
 
     @Test
     func typesThatNoFileDeclaresAreAskedOnceForAllFilesWithTheSameCompilerArguments() {
         let local = "s:6Sample5LocalP", outer = "s:6Vendor5OuterP", middle = "s:6Vendor3MidP"
-        let alias = "s:6Vendor5AliasA", hashable = "s:SH", equatable = "s:SQ"
+        let alias = "s:6Vendor5Aliasa", hashable = "s:SH", equatable = "s:SQ"
         // What these inherit from is known without a question.
         let encodable = "s:SE", sendable = "s:s8SendableP"
         // The USR of a declaration of C starts with the name of its file if no other file can see it.
@@ -90,12 +152,17 @@ struct UnusedDeclarationImportedTypesTests {
             outer: [middle, hashable, local],
             middle: [encodable, outer],
             hashable: [equatable],
+            // What these inherit from is not asked.
+            alias: Self.otherKinds,
         ]
         var asked = [Question](), released = [Question]()
         let sourceKit = UnusedDeclarationUsage.InheritanceSource(
             inheritedTypes: { usr, file, compilerArguments in
                 asked.append(Question(usr: usr, path: file.path?.filepath, compilerArguments: compilerArguments))
-                return answers[usr] ?? []
+                let all = answers[usr] ?? []
+                return UnusedDeclarationUsage.InheritedTypes(
+                    all: all, protocolsAndTypeAliases: all.subtracting(Self.otherKinds)
+                )
             },
             release: { file, compilerArguments in
                 released.append(Question(usr: "", path: file.path?.filepath, compilerArguments: compilerArguments))
@@ -107,7 +174,8 @@ struct UnusedDeclarationImportedTypesTests {
         )
 
         // The first file in the order of the paths asks for all files that are compiled like it. It asks
-        // neither about what a file declares nor about a declaration of C.
+        // neither about what a file declares nor about a declaration of C, and of what an answer names only
+        // about protocols and type aliases.
         let first = [outer, middle, alias, hashable, equatable]
             .map { Question(usr: $0, path: "/A.swift", compilerArguments: ["-D", "FIRST"]) }
         let second = [outer, middle, hashable, equatable]

@@ -7,16 +7,12 @@ struct CompilerArgumentsExtractor {
             guard let swiftcIndex = line.range(of: "swiftc ")?.upperBound else {
                 return
             }
-            let arguments = parseCLIArguments(String(line[swiftcIndex...]))
+            let arguments = parseCLIArguments(String(line[swiftcIndex...])).expandingResponseFilesOfABuildLog
             // A line that names a module is an invocation. The name can come from a response file too.
-            guard moduleNameOptionsOfABuildLog.contains(where: line.contains)
-                    || arguments.filter({ $0.starts(with: "@") }).expandingResponseFilesOfABuildLog
-                        .contains("-module-name") else {
+            guard arguments.contains(where: { $0 == "-module-name" || $0.starts(with: moduleNameWithValue) }) else {
                 return
             }
-            compilerInvocations.append(
-                arguments.expandingResponseFilesOfABuildLog.removingArgumentsThatSourceKitRejects
-            )
+            compilerInvocations.append(arguments.removingArgumentsThatSourceKitRejects)
         }
         return compilerInvocations
     }
@@ -24,12 +20,10 @@ struct CompilerArgumentsExtractor {
 
 // MARK: - Private
 
-/// The option that names the module, as the compiler takes it in one argument with the name.
+/// The option that names the module, as the compiler takes it in one argument with the name. It also takes
+/// the name in the next argument. Which options take the next argument is not known here, so an argument that
+/// another option takes counts as the option if it is spelled like it: `-I -module-name`.
 private let moduleNameWithValue = "-module-name="
-
-/// The option that names the module, as the text of a build log's line has it outside of quotes: with the name
-/// in the next argument, or in the same one after `=`, which a build log can escape.
-private let moduleNameOptionsOfABuildLog = [" -module-name ", " -module-name=", #" -module-name\="#]
 
 /// Stands for a backslash inside quotes in what `parseCLIArguments` returns.
 private let quotedBackslashPlaceholder = "\u{1}"
@@ -41,7 +35,9 @@ private func parseCLIArguments(_ string: String) -> [String] {
     let scanner = Scanner(string: string)
     var str = ""
     var didStart = false
-    while let result = scanner.scanUpToString("\"") {
+    while !scanner.isAtEnd {
+        // Nothing is scanned where a quote comes first: at the start, and after another quoted argument.
+        let result = scanner.scanUpToString("\"") ?? ""
         if didStart {
             str += result.replacingOccurrences(of: " ", with: escapedSpacePlaceholder)
                 .replacingOccurrences(of: "\\", with: quotedBackslashPlaceholder)
@@ -113,19 +109,14 @@ private func partiallyFilter(arguments args: [String]) -> ([String], Bool) {
 }
 
 extension Array where Element == String {
-    /// These arguments of a build log's line as the compiler gets them: without the escapes of the log, with the
-    /// contents of each response file in its place, and with the module's name in an argument of its own. A
-    /// response file is not written by the build tool, so it has none of the log's escapes.
+    /// These arguments of a build log's line as the compiler gets them: without the escapes of the log, and with
+    /// the contents of each response file in its place. A response file is not written by the build tool, so it
+    /// has none of the log's escapes.
     fileprivate var expandingResponseFilesOfABuildLog: [String] {
         // A backslash inside quotes is no escape: a shell passes it on as it is before `=` and before a space.
         removingEscapesOfBuildLogs
             .map { $0.replacingOccurrences(of: quotedBackslashPlaceholder, with: "\\") }
             .expandingResponseFiles(within: [])
-            .flatMap { argument in
-                argument.starts(with: moduleNameWithValue)
-                    ? ["-module-name", String(argument.dropFirst(moduleNameWithValue.count))]
-                    : [argument]
-            }
     }
 
     /// Returns the arguments with the contents of each response file in its place.

@@ -106,8 +106,7 @@ struct UnusedImportRule: CorrectableRule, AnalyzerRule, CollectingRule {
 
 private extension SwiftLintFile {
     func getImportUsage(compilerArguments: [String], configuration: UnusedImportConfiguration) -> [ImportUsage] {
-        let currentModule = (compilerArguments.firstIndex(of: "-module-name")?.advanced(by: 1))
-            .map { compilerArguments[$0] }
+        let currentModule = compilerArguments.moduleName
         var (imports, usrFragments) = getImportsAndUSRFragments(compilerArguments: compilerArguments)
 
         // Always disallow 'Swift' and 'SwiftShims' because they're always available without importing.
@@ -335,5 +334,22 @@ private extension SwiftLintFile {
         }
 
         return containsAttributesRequiringFoundation(dict: structureDictionary)
+    }
+}
+
+private extension [String] {
+    /// The name that these compiler arguments give the module. The compiler takes it in the argument after
+    /// `-module-name`, or in the same one after `=`, and the last of these options counts.
+    var moduleName: String? {
+        let option = "-module-name"
+        for (index, argument) in enumerated().reversed() {
+            if argument == option, index + 1 < count {
+                return self[index + 1]
+            }
+            if argument.hasPrefix(option + "=") {
+                return String(argument.dropFirst(option.count + 1))
+            }
+        }
+        return nil
     }
 }

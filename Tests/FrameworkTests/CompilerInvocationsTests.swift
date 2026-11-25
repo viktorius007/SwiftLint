@@ -142,32 +142,66 @@ struct CompilerInvocationsTests {
         #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
     }
 
-    @Test(.temporaryDirectory, arguments: ["-module-name=Sample\nA.swift\n", "-module-name\nSample\nA.swift\n"])
-    func moduleNameOfAResponseFileGetsAnArgumentOfItsOwn(contents: String) throws {
+    // The compiler takes the name of the module in the argument of the option too.
+    @Test(.temporaryDirectory)
+    func lineWithItsModuleNameInTheArgumentOfTheOptionInAResponseFileIsAnInvocation() throws {
         let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
-        try contents.write(to: responseFile, atomically: true, encoding: .utf8)
+        try "-module-name=Sample\nA.swift\n".write(to: responseFile, atomically: true, encoding: .utf8)
         let log = "swiftc @\(responseFile.filepath)"
 
         let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
 
-        #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+        #expect(invocations == [["-module-name=Sample", "A.swift", "-D", "DEBUG"]])
     }
 
-    @Test(arguments: ["swiftc -module-name=Sample A.swift", #"swiftc -module-name\=Sample A.swift"#])
-    func moduleNameInTheArgumentOfItsOptionGetsAnArgumentOfItsOwn(log: String) {
+    @Test(arguments: [
+        "swiftc -module-name=Sample A.swift",
+        #"swiftc -module-name\=Sample A.swift"#,
+        #"swiftc "-module-name=Sample" A.swift"#,
+    ])
+    func lineWithItsModuleNameInTheArgumentOfTheOptionIsAnInvocation(log: String) {
         let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
 
-        #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+        #expect(invocations == [["-module-name=Sample", "A.swift", "-D", "DEBUG"]])
     }
 
-    // The option counts in the text of a line only where it starts an argument outside of quotes.
-    @Test(.temporaryDirectory, arguments: [
-        #"swiftc -I "-module-name" A.swift"#,
-        #"swiftc -I "-module-name=Sample" A.swift"#,
+    @Test
+    func quotedArgumentsAreReadAtTheStartOfALineAndNextToEachOther() {
+        let log = #"swiftc "A B.swift" "C D.swift" -module-name Sample "E F.swift""#
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["A B.swift", "C D.swift", "-module-name", "Sample", "E F.swift", "-D", "DEBUG"]])
+    }
+
+    // A shell takes the quotes away, so the compiler gets the option as it gets one without them.
+    @Test
+    func lineWithItsModuleOptionInQuotesIsAnInvocation() {
+        let log = #"swiftc -typecheck "-module-name" Sample A.swift"#
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["-typecheck", "-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+    }
+
+    @Test
+    func argumentSpelledLikeTheModuleOptionWithItsNameStaysOneArgument() {
+        let log = #"swiftc -I "-module-name=Includes" -module-name Actual A.swift"#
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["-I", "-module-name=Includes", "-module-name", "Actual", "A.swift", "-D", "DEBUG"]])
+    }
+
+    // The option counts where it is an argument or starts one. Inside quotes, a backslash is no escape.
+    @Test(arguments: [
+        #"swiftc -I "path -module-name Sample" --version"#,
+        #"swiftc -I "path -module-name=Sample" --version"#,
+        #"swiftc "-module-name\=Sample" A.swift"#,
         "swiftc -Xfrontend=-module-name=Sample A.swift",
         "swiftc @missing.rsp A.swift",
     ])
-    func lineThatNamesNoModuleInItsTextOrInAResponseFileIsNoInvocation(log: String) {
+    func lineWithoutAnArgumentThatNamesAModuleIsNoInvocation(log: String) {
         #expect(CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log).isEmpty)
     }
 
