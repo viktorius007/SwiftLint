@@ -20,6 +20,15 @@ struct CompilerInvocationsTests {
     }
 
     @Test
+    func macroPluginPathKeepsItsModuleSeparatorWithoutTheEscapeOfTheBuildLog() {
+        let log = ##"swiftc -module-name Sample -external-plugin-path /plugins/testing\#/bin/plugin-server A.swift"##
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.contains("/plugins/testing#/bin/plugin-server") == true)
+    }
+
+    @Test
     func buildLogInvocationIsNotFoundForAnotherFile() {
         let invocations = CompilerInvocations.buildLog(compilerInvocations: [Self.invocation])
 

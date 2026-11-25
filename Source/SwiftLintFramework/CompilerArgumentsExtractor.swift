@@ -82,6 +82,8 @@ extension Array where Element == String {
         // https://github.com/realm/SwiftLint/issues/3365
         args = args.map { $0.replacingOccurrences(of: "\\=", with: "=") }
         args = args.map { $0.replacingOccurrences(of: "\\ ", with: " ") }
+        // `swift build -v` escapes the `#` between a macro plugin's path and its module name.
+        args = args.map { $0.replacingOccurrences(of: "\\#", with: "#") }
         args.append(contentsOf: ["-D", "DEBUG"])
         var shouldContinueToFilterArguments = true
         while shouldContinueToFilterArguments {
