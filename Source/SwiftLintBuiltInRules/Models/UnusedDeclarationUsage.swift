@@ -4,22 +4,27 @@ import SwiftSyntax
 // The index holds no reference for some uses of a declaration. This file finds the ones that follow from facts
 // about the declaration's type:
 //
-// * `main()` is called by the language if a type marked `@main` finds it by member lookup.
-// * `wrappedValue` and `projectedValue` are read by every property that a property wrapper is applied to.
+// * `main()` is called by the language if a type marked `@main` finds it by member lookup. Which one it calls
+//   if the type finds several is not known here, so each of them counts as used.
+// * `wrappedValue` and `projectedValue` are read by the properties that a property wrapper is applied to.
 // * A conformance uses the members that satisfy the protocol's requirements. The index lists these witnesses
 //   under the conforming declaration (see `isWitnessDeclaredElsewhere`), with one exception: the compiler leaves
 //   an extension without members out of the index if none of its inherited types is a single protocol or class,
 //   as in `extension T: P & Q {}` or with a type alias of such a composition. For these extensions, a member
 //   counts as a witness if a requirement of one of the protocols has its name, and if the type could find it:
-//   in itself, or in what it inherits from. That is the only part decided by name; it also keeps an unused
-//   member that shares its name and labels with a witness. Whatever a type alias mentions counts as inherited
-//   by it, also the generic argument in `typealias A = B<C>`.
+//   in itself, in what it inherits from, or at file scope for an operator.
+//
+// All of this except the witnesses of the index is decided by name. A name tells nothing about types and
+// constraints, so an unused member is kept if it shares its name and labels with a used one of the same type,
+// also where a constraint of its extension rules it out. Whatever a type alias mentions counts as inherited
+// by it, also the generic argument in `typealias A = B<C>`.
 
 /// Everything that all files together use.
 struct UnusedDeclarationUsage {
     /// A member of a type, as far as its name tells.
     struct Member: Hashable {
-        /// USR of the type that declares the member, or that the member's extension extends.
+        /// USR of the type that declares the member, or that the member's extension extends. Empty for an
+        /// operator at file scope.
         let type: String
         let name: Name
     }
@@ -42,8 +47,6 @@ struct UnusedDeclarationUsage {
     struct TypeFacts: Hashable {
         /// Types marked `@main`.
         var entryPoints = Set<String>()
-        /// Types that declare a static `main()` themselves or in an extension.
-        var typesDeclaringMain = Set<String>()
         /// Types marked `@propertyWrapper`.
         var propertyWrappers = Set<String>()
         /// For each type, protocol or type alias: what it inherits from, conforms to or stands for.
@@ -56,6 +59,9 @@ struct UnusedDeclarationUsage {
 
     private let referenced: Set<String>
     private let usedMembers: Set<Member>
+    /// For each type that can hold a witness of a conformance missing from the index: the requirements of
+    /// each such conformance.
+    private let witnessNames: [String: [Set<Name>]]
 
     init(of collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs]) {
         referenced = collectedInfo.values.reduce(into: Set()) { $0.formUnion($1.referenced) }
@@ -82,35 +88,38 @@ struct UnusedDeclarationUsage {
         }
 
         var usedMembers = Set<Member>()
-        let typesDeclaringMain = facts.reduce(into: Set()) { $0.formUnion($1.typesDeclaringMain) }
-        for type in Set(facts.flatMap(\.entryPoints)) {
-            // Member lookup prefers the type's own `main()` to an inherited one.
-            let owners: Set = typesDeclaringMain.contains(type) ? [type] : withInherited([type])
-            for owner in owners {
-                usedMembers.insert(Member(type: owner, name: .main))
-            }
+        for owner in withInherited(facts.flatMap(\.entryPoints)) {
+            usedMembers.insert(Member(type: owner, name: Name(name: "main()", kind: .static)))
         }
         for type in facts.flatMap(\.propertyWrappers) {
             usedMembers.insert(Member(type: type, name: Name(name: "wrappedValue", kind: .instance)))
             usedMembers.insert(Member(type: type, name: Name(name: "projectedValue", kind: .instance)))
         }
+        self.usedMembers = usedMembers
+
+        var witnessNames = [String: [Set<Name>]]()
         for (type, protocols) in missingConformances {
-            let names = withInherited(protocols).flatMap { requirements[$0] ?? [] }
+            let names = Set(withInherited(protocols).flatMap { requirements[$0] ?? [] })
             guard names.isNotEmpty else {
                 continue
             }
-            // A witness can come from the type, a superclass or an extension of a protocol.
-            for owner in withInherited([type]) {
-                for name in names {
-                    usedMembers.insert(Member(type: owner, name: name))
-                }
+            // A witness can come from the type, a superclass, an extension of a protocol or the file scope.
+            for owner in withInherited([type]).union([Member.fileScope]) {
+                witnessNames[owner, default: []].append(names)
             }
         }
-        self.usedMembers = usedMembers
+        self.witnessNames = witnessNames
     }
 
     func contains(_ declaration: UnusedDeclarationRule.DeclaredUSR) -> Bool {
-        referenced.contains(declaration.usr) || declaration.member.map(usedMembers.contains) == true
+        if referenced.contains(declaration.usr) {
+            return true
+        }
+        guard let member = declaration.member else {
+            return false
+        }
+        return usedMembers.contains(member)
+            || witnessNames[member.type]?.contains { $0.contains(member.name) } == true
     }
 }
 
@@ -136,8 +145,11 @@ extension UnusedDeclarationUsage {
             if let type = declaredOrExtendedType(of: entity) {
                 noteType(type, declaredOrExtendedBy: entity)
             }
-            guard let name = entity.memberName, let type = declaredOrExtendedType(of: parent) else {
+            guard let name = entity.memberName else {
                 return nil
+            }
+            guard let type = declaredOrExtendedType(of: parent) else {
+                return entity.isOperator ? Member(type: Member.fileScope, name: name) : nil
             }
             if parent.declarationKind == .protocol {
                 // What a protocol declares in its body is a requirement and no witness. Its type aliases are
@@ -146,9 +158,6 @@ extension UnusedDeclarationUsage {
                     facts.requirements[type, default: []].insert(name)
                 }
                 return nil
-            }
-            if name == .main {
-                facts.typesDeclaringMain.insert(type)
             }
             return Member(type: type, name: name)
         }
@@ -185,8 +194,10 @@ extension UnusedDeclarationUsage {
             if let type = types[position] {
                 return type
             }
-            // An extension's own USR names its first member. The extended type is the reference at its position.
-            let type = entity.entities.first { $0.isReference && $0.line == line && $0.column == column }?.usr
+            // An extension's own USR names its first member. The extended type is the reference at its position;
+            // for an extension of a type alias, the alias comes first and what it stands for second.
+            let references = entity.entities.filter { $0.isReference && $0.line == line && $0.column == column }
+            let type = (references.first { !$0.isTypeAliasReference } ?? references.first)?.usr
             types[position] = type
             return type
         }
@@ -208,7 +219,7 @@ extension SwiftLintFile {
             .filter { $0.inheritanceClause != nil }
         let converter = locationConverter
         var offsetsOfIndexedExtensions = Set<Int>()
-        var referencesByOffset = [Int: String]()
+        var referencesByOffset = [Int: [SourceKittenDictionary]]()
         for entity in topLevelEntities {
             guard let line = entity.line, let column = entity.column else {
                 continue
@@ -217,8 +228,8 @@ extension SwiftLintFile {
             let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
             if entity.kind?.starts(with: "source.lang.swift.decl.extension") == true {
                 offsetsOfIndexedExtensions.insert(offset)
-            } else if entity.isReference, referencesByOffset[offset] == nil {
-                referencesByOffset[offset] = entity.usr
+            } else if entity.isReference {
+                referencesByOffset[offset, default: []].append(entity)
             }
         }
         var conformances = [String: Set<String>]()
@@ -226,13 +237,15 @@ extension SwiftLintFile {
             // The index places an extension at the name of the extended type: at `B` for `A.B<C>`.
             guard let offset = node.extendedType.nameTokens.first?.positionAfterSkippingLeadingTrivia.utf8Offset,
                   !offsetsOfIndexedExtensions.contains(offset),
-                  let type = referencesByOffset[offset],
+                  let extended = referencesByOffset[offset],
+                  let type = (extended.first { !$0.isTypeAliasReference } ?? extended.first)?.usr,
                   let inheritance = node.inheritanceClause else {
                 continue
             }
             // The names only: a generic argument of an inherited type is referenced, and not inherited.
             let inherited = inheritance.inheritedTypes.flatMap(\.type.nameTokens)
-                .compactMap { referencesByOffset[$0.positionAfterSkippingLeadingTrivia.utf8Offset] }
+                .flatMap { referencesByOffset[$0.positionAfterSkippingLeadingTrivia.utf8Offset] ?? [] }
+                .compactMap(\.usr)
             conformances[type, default: []].formUnion(inherited)
         }
         return conformances
@@ -258,8 +271,19 @@ private extension SourceKittenDictionary {
         }
     }
 
+    var isOperator: Bool {
+        switch declarationKind {
+        case .functionOperator, .functionOperatorInfix, .functionOperatorPostfix, .functionOperatorPrefix: true
+        default: false
+        }
+    }
+
     var isReference: Bool {
         kind?.starts(with: "source.lang.swift.ref.") == true
+    }
+
+    var isTypeAliasReference: Bool {
+        kind == "source.lang.swift.ref.typealias"
     }
 
     var usr: String? {
@@ -267,8 +291,8 @@ private extension SourceKittenDictionary {
     }
 }
 
-private extension UnusedDeclarationUsage.Name {
-    static let main = Self(name: "main()", kind: .static)
+private extension UnusedDeclarationUsage.Member {
+    static let fileScope = ""
 }
 
 private extension TypeSyntax {
