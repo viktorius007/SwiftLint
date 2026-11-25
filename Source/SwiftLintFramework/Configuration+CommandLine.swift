@@ -132,10 +132,10 @@ extension Configuration {
             indexByConfiguration[configuration] = configurations.count - 1
             return configurations.count - 1
         }
-        var indexByDirectory = [URL: Int](minimumCapacity: uniqueDirectories.count)
-        for (directory, configuration) in zip(uniqueDirectories, directoryConfigurations) {
-            indexByDirectory[directory] = index(configuration)
-        }
+        let indexByDirectory = zip(uniqueDirectories, directoryConfigurations)
+            .reduce(into: [URL: Int](minimumCapacity: uniqueDirectories.count)) { indices, pair in
+                indices[pair.0] = index(pair.1)
+            }
         let indexOfSelf = directories.contains(nil) ? index(self) : nil
 
         // Files whose configuration specifies they should be excluded will be skipped
