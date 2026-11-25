@@ -91,6 +91,32 @@ struct UnusedImportEquivalenceTests {
     }
 
     @Test(.temporaryDirectory)
+    func modulesAreToldApartAcrossClientsEvenIfOneTakesTheABINameOfTheOther() throws {
+        // Both modules give their `answer()` the USR that names the first module.
+        let canonical = "UnusedImportCanonicalLib"
+        let alias = "UnusedImportAliasLib"
+        try compileModule(named: canonical, source: "public func answer() -> Int { 1 }")
+        try compileModule(
+            named: alias,
+            source: "public func answer() -> Int { 1 }",
+            flags: ["-Xfrontend", "-module-abi-name", "-Xfrontend", canonical]
+        )
+
+        // The two clients are compiled with different arguments, like the files of two modules.
+        for moduleName in [canonical, alias] {
+            let linter = try makeLinter(
+                source: "import \(moduleName)\n\npublic func use() -> Int { answer() }\n",
+                compilerFlags: ["-I", URL.cwd.filepath],
+                requireExplicitImports: true,
+                fileName: "\(moduleName)Client.swift"
+            )
+            let storage = RuleStorage()
+
+            #expect(linter.collect(into: storage).styleViolations(using: storage).isEmpty, "\(moduleName)")
+        }
+    }
+
+    @Test(.temporaryDirectory)
     func filesOfOneModuleCanUseModulesWithTheSameABIName() throws {
         let abiName = ["-Xfrontend", "-module-abi-name", "-Xfrontend", "UnusedImportSharedABIInOneModule"]
         let moduleNames = ["UnusedImportFirstLib", "UnusedImportSecondLib"]

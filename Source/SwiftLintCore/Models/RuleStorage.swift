@@ -4,6 +4,8 @@ import Dispatch
 public class RuleStorage: CustomStringConvertible {
     private var storage: [ObjectIdentifier: [SwiftLintFile: Any]]
     private var summaries = [ObjectIdentifier: Any]()
+    /// How often info was collected for a rule. Tells whether a summary was computed from the current info.
+    private var collections = [ObjectIdentifier: Int]()
     private let access = DispatchQueue(label: "io.realm.swiftlint.ruleStorageAccess", attributes: .concurrent)
 
     public var description: String {
@@ -25,6 +27,7 @@ public class RuleStorage: CustomStringConvertible {
         access.sync(flags: .barrier) {
             storage[key, default: [:]][file] = info
             summaries[key] = nil
+            collections[key, default: 0] += 1
         }
     }
 
@@ -63,16 +66,22 @@ public class RuleStorage: CustomStringConvertible {
     ///
     /// - returns: The derived value.
     public func summary<R: CollectingRule, Summary>(
-        for rule: R,
+        for _: R,
         compute: ([SwiftLintFile: R.FileInfo]) -> Summary
     ) -> Summary {
         let key = ObjectIdentifier(R.self)
-        if let summary = access.sync(execute: { summaries[key] }) as? Summary {
+        let (cached, collection, info) = access.sync {
+            (summaries[key], collections[key, default: 0], storage[key])
+        }
+        if let summary = cached as? Summary {
             return summary
         }
-        let summary = compute(collectedInfo(for: rule) ?? [:])
+        let summary = compute(info as? [SwiftLintFile: R.FileInfo] ?? [:])
         access.sync(flags: .barrier) {
-            summaries[key] = summary
+            // Info collected in the meantime makes this summary outdated. It must not replace a newer one.
+            if collections[key, default: 0] == collection {
+                summaries[key] = summary
+            }
         }
         return summary
     }

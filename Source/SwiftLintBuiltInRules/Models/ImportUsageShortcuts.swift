@@ -16,9 +16,10 @@ import SwiftSyntax
 /// - The cursor info at a position is determined by the declarations that SourceKit's index lists there. So two
 ///   positions with the same declarations give the same answer.
 ///
-/// Known limit: a module built with `-module-abi-name` set to the name of another module gives its declarations
-/// the USRs that the other module would give to declarations of the same name. If a file uses both, the second
-/// one gets the answer of the first.
+/// All of this takes a USR to name one declaration, as the other analyzer rules do. A build can break that on
+/// purpose: `-module-abi-name` and the C attribute `external_source_symbol` can give two declarations the same USR.
+/// The checks in `remember(_:at:)` catch the plain forms of this. Where they do not, and both declarations are used
+/// in one module, the second one gets the answer of the first.
 struct ImportUsageShortcuts {
     /// What the cursor info at a position says, as far as the rule needs it.
     struct SymbolUsage {

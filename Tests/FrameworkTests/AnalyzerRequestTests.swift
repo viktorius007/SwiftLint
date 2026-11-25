@@ -35,12 +35,15 @@ struct AnalyzerRequestTests {
 
     @Test
     func analyzerRulesAskSourceKitInOnePassAndThenReleaseTheSyntaxTree() throws {
-        let file = SwiftLintFile.testFile(withContents: Self.contents, persistToDisk: true)
+        // The capture list gives `capture_variable` something to look up for its second set.
+        let contents = Self.contents + "var counter = 0\nlet closure = { [counter] in counter }\n"
+        let file = SwiftLintFile.testFile(withContents: contents, persistToDisk: true)
         let path = try #require(file.path?.filepath)
         let configuration = Configuration(
             rulesMode: .onlyConfiguration(["capture_variable", "unused_declaration", "unused_import"])
         )
-        let linter = Linter(file: file, configuration: configuration, compilerArguments: file.makeCompilerArguments())
+        let compilerArguments = file.makeCompilerArguments() + ["-module-name", "ReleasedModule"]
+        let linter = Linter(file: file, configuration: configuration, compilerArguments: compilerArguments)
         let storage = RuleStorage()
 
         var collectedLinter: CollectedLinter?
@@ -57,7 +60,8 @@ struct AnalyzerRequestTests {
         let namesOfRelease: [String] = release.map(\.name)
         #expect(namesOfRelease == ["source.request.editor.open", "source.request.editor.close"])
         #expect(release.allSatisfy { $0.description.contains(path) })
-        #expect(release.first?.description.contains("key.compilerargs") == true)
+        // SourceKit finds the tree by the compiler arguments. Other arguments would release nothing.
+        #expect(release.first?.description.contains("ReleasedModule") == true)
 
         // A request while validating would make SourceKit build the tree a second time.
         #expect(!whileValidating.contains { Self.typeCheckingRequests.contains($0.name) })

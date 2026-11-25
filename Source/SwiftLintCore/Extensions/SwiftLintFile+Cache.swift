@@ -58,7 +58,7 @@ final class FileCache: @unchecked Sendable {
     fileprivate var foldedSyntaxTree = Cached<SourceFileSyntax?>.notComputed
     fileprivate var syntaxMap = Cached<SwiftLintSyntaxMap?>.notComputed
     fileprivate var swiftSyntaxTokens = Cached<[SwiftLintSyntaxToken]?>.notComputed
-    fileprivate var index = Cached<SourceKittenDictionary?>.notComputed
+    fileprivate var index = Cached<(arguments: [String], index: SourceKittenDictionary?)>.notComputed
     fileprivate var assertHandlerSlot = Cached<AssertHandler?>.notComputed
 
     /// Returns the cached value for a slot, computing it via `factory` on a cache miss.
@@ -335,23 +335,25 @@ extension SwiftLintFile {
     /// Returns SourceKit's index of this file: all declarations and references SourceKit finds in it.
     ///
     /// SourceKit type-checks the whole file for every index request. So the result is kept like all other cached
-    /// data of this file, and all analyzer rules share it. The compiler arguments of a file are the same for all
-    /// rules, which is why they are not part of the cache key.
+    /// data of this file, and all analyzer rules share it. One index is kept. A call with other compiler arguments
+    /// than the kept index was made with gets its own index, which is not kept.
     ///
     /// - parameter compilerArguments: The compiler arguments needed to compile this file.
     ///
     /// - returns: The index, or `nil` if the file has no path or the request failed.
     public func index(compilerArguments: [String]) -> SourceKittenDictionary? {
-        fileCache.getOrCompute
-            {
-                guard let path = path?.filepath else {
-                    return nil
-                }
-                let request = Request.index(file: path, arguments: compilerArguments)
-                return (try? request.sendIfNotDisabled()).map(SourceKittenDictionary.init)
+        func requestIndex() -> SourceKittenDictionary? {
+            guard let path = path?.filepath else {
+                return nil
             }
+            let request = Request.index(file: path, arguments: compilerArguments)
+            return (try? request.sendIfNotDisabled()).map(SourceKittenDictionary.init)
+        }
+        let cached = fileCache.getOrCompute
+            { (arguments: compilerArguments, index: requestIndex()) }
             get: { fileCache.index }
             set: { fileCache.index = $0 }
+        return cached.arguments == compilerArguments ? cached.index : requestIndex()
     }
 
     /// Invalidates all cached data for this file.
