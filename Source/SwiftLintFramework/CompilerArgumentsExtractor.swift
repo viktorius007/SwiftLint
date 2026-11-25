@@ -21,8 +21,9 @@ struct CompilerArgumentsExtractor {
 // MARK: - Private
 
 /// The option that names the module, as the compiler takes it in one argument with the name. It also takes
-/// the name in the next argument. Which options take the next argument is not known here, so an argument that
-/// another option takes counts as the option if it is spelled like it: `-I -module-name`.
+/// the name in the next argument. Which arguments the compiler reads as options is not known here, so an
+/// argument that another option takes, or a file after `--`, counts as the option if it is spelled like it:
+/// `-I -module-name`, `-- -module-name=A.swift`.
 private let moduleNameWithValue = "-module-name="
 
 /// Stands for a backslash inside quotes in what `parseCLIArguments` returns.
@@ -150,7 +151,12 @@ extension Array where Element == String {
 
     /// Returns filtered compiler arguments from `xcodebuild` to something that SourceKit/Clang will accept.
     var filteringCompilerArguments: [String] {
-        removingEscapesOfBuildLogs.removingArgumentsThatSourceKitRejects
+        var args = removingEscapesOfBuildLogs
+        // The arguments of a compilation database start with the compiler. A line of a build log is cut after it.
+        if args.first == "swiftc" {
+            args.removeFirst()
+        }
+        return args.removingArgumentsThatSourceKitRejects
     }
 
     // https://github.com/realm/SwiftLint/issues/3365
@@ -160,9 +166,6 @@ extension Array where Element == String {
 
     fileprivate var removingArgumentsThatSourceKitRejects: [String] {
         var args = self
-        if args.first == "swiftc" {
-            args.removeFirst()
-        }
         args.append(contentsOf: ["-D", "DEBUG"])
         var shouldContinueToFilterArguments = true
         while shouldContinueToFilterArguments {

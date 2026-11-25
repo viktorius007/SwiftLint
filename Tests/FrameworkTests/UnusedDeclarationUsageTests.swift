@@ -60,6 +60,33 @@ struct UnusedDeclarationUsageTests {
         )
     }
 
+    // The language calls the entry from code that the index does not have.
+    @Test(.temporaryDirectory, arguments: ["", " async", " throws", " async throws"])
+    func entryPointThatTheMainTypeDeclaresIsUsed(effects: String) throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                @main
+                enum Tool {
+                    static func main()\(effects) {
+                        print(helper())
+                    }
+
+                    static func helper() -> Int { 1 }
+
+                    static func ↓leftover() {}
+                }
+                """,
+                """
+                enum ↓Other {
+                    static func ↓main()\(effects) {}
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
     // Which `main()` the language calls is not known, so the one of the main type is kept as well.
     @Test(.temporaryDirectory)
     func entryPointIsFoundAlthoughTheMainTypeDeclaresAMainThatCannotBeOne() throws {

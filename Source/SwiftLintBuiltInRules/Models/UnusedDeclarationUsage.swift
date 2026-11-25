@@ -38,8 +38,10 @@
 // it out. Whatever a type alias mentions counts as inherited by it, also the generic argument in
 // `typealias A = B<C>`.
 //
-// A declaration is known by its USR in all files together. Two modules with one name, each seen by other files
-// of one run, have the same USRs, so what SourceKit tells about a protocol of the one counts for the other too.
+// A declaration is known by its USR in all files together, so two declarations with one USR are one. Two
+// modules with one name, each seen by other files of one run, have the same USRs: what SourceKit tells about a
+// protocol of the one counts for the other too. So has a module that is compiled with the `-module-abi-name` of
+// another: a type of it with the USR of a type of Swift Testing counts as that type.
 
 /// Everything that all files together use.
 struct UnusedDeclarationUsage {

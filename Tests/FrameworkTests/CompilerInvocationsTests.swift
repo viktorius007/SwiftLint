@@ -193,6 +193,20 @@ struct CompilerInvocationsTests {
         #expect(invocations == [["-I", "-module-name=Includes", "-module-name", "Actual", "A.swift", "-D", "DEBUG"]])
     }
 
+    // A line is cut after the compiler, so an argument with the compiler's name is a file. The arguments of a
+    // compilation database start with the compiler.
+    @Test(arguments: [
+        #"swiftc "swiftc" -module-name Sample A.swift"#,
+        "swiftc swiftc -module-name Sample A.swift",
+    ])
+    func compilerIsDroppedFromTheArgumentsOfACompilationDatabaseOnly(log: String) {
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["swiftc", "-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+        #expect(["swiftc", "-module-name", "Sample", "A.swift"].filteringCompilerArguments
+            == ["-module-name", "Sample", "A.swift", "-D", "DEBUG"])
+    }
+
     // The option counts where it is an argument or starts one. Inside quotes, a backslash is no escape.
     @Test(arguments: [
         #"swiftc -I "path -module-name Sample" --version"#,
