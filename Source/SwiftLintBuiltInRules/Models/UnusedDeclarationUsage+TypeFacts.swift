@@ -18,6 +18,7 @@ extension UnusedDeclarationUsage {
                    let usr = entity.usr {
                     facts.inherited[alias, default: []].insert(usr)
                 }
+                noteSwiftTesting(attribute: entity, in: parent)
                 return nil
             }
             if let type = declaredOrExtendedType(of: entity) {
@@ -78,6 +79,22 @@ extension UnusedDeclarationUsage {
                member.entities.contains(where: { $0.declarationKind == .functionAccessorGetter && $0.isImplicit }),
                !member.enclosedSwiftAttributes.contains(.lazy) {
                 facts.storedProperties[type, default: []].insert(usr)
+            }
+        }
+
+        /// Notes what Swift Testing runs, if the entity is the reference of an attribute to `@Test` or `@Suite`.
+        private mutating func noteSwiftTesting(attribute: SourceKittenDictionary, in parent: SourceKittenDictionary) {
+            guard attribute.kind == "source.lang.swift.ref.macro", let macro = attribute.usr,
+                  case let marksTest = macro.hasPrefix(UnusedDeclarationUsage.testMacroPrefix),
+                  marksTest || macro.hasPrefix(UnusedDeclarationUsage.suiteMacroPrefix),
+                  let marked = parent.declaration(following: attribute) else {
+                return
+            }
+            if let usr = marked.usr {
+                facts.runBySwiftTesting.insert(usr)
+            }
+            if marksTest, let owner = declaredOrExtendedType(of: parent) {
+                facts.runBySwiftTesting.insert(owner)
             }
         }
 
@@ -173,6 +190,13 @@ private extension SourceKittenDictionary {
         default:
             return nil
         }
+    }
+
+    /// The first declaration among this entity's entities that comes after the given one of them.
+    func declaration(following entity: SourceKittenDictionary) -> SourceKittenDictionary? {
+        entities.drop { $0.line != entity.line || $0.column != entity.column || $0.kind != entity.kind }
+            .dropFirst()
+            .first { $0.kind?.starts(with: "source.lang.swift.decl.") == true }
     }
 
     var declaresType: Bool {

@@ -316,6 +316,10 @@ public extension Rule {
 
 /// A rule that can operate on the post-typechecked AST using compiler arguments. Performs rules that are more like
 /// static analysis than syntactic checks.
+///
+/// The compiler arguments that such a rule gets keep the macros of Swift Testing unexpanded (see
+/// `SwiftLintFile.compilerArgumentsWithoutTestingMacros(_:)`). So SourceKit answers for the code as it is written,
+/// and a rule cannot read what these macros expand to.
 public protocol AnalyzerRule: OptInRule {}
 
 public extension AnalyzerRule {

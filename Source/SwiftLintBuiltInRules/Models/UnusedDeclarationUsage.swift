@@ -17,6 +17,11 @@
 //   no linted file declares are not known. Then everything the type inherits and every operator at file scope
 //   counts as a witness. The type's own members do not: SourceKit tells for each of them whether it satisfies
 //   a requirement.
+// * A test and a suite of Swift Testing are run by the code that `@Test` and `@Suite` expand to. That code also
+//   refers to the type that holds a test. The index has it only if the compiler expanded the macros, and
+//   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run
+//   if it carries one of the two attributes. The index tells which macro an attribute refers to, and it lists
+//   that reference right before the declaration that carries the attribute.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves
 // out are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it
@@ -71,6 +76,8 @@ struct UnusedDeclarationUsage {
         var typesWithOwnEncoding = Set<String>()
         /// The types, protocols, type aliases and generic parameters that the file declares.
         var declaredTypes = Set<String>()
+        /// The tests and suites of Swift Testing, and the types that hold a test.
+        var runBySwiftTesting = Set<String>()
     }
 
     static let decodable = "s:Se"
@@ -82,6 +89,10 @@ struct UnusedDeclarationUsage {
     static let decodingWitnessSuffix = "s7Decoder_p_tKcfc"
     /// What ends the USR of every `func encode(to: any Encoder) throws`.
     static let encodingWitnessSuffix = "6encode2toys7Encoder_p_tKF"
+    /// What starts the USR of every macro named `Test` in Swift Testing.
+    static let testMacroPrefix = "s:7Testing4Test"
+    /// What starts the USR of every macro named `Suite` in Swift Testing.
+    static let suiteMacroPrefix = "s:7Testing5Suite"
     /// Protocols of the standard library that cannot have requirements.
     private static let markerProtocols: Set = ["s:s8SendableP", "s:s16SendableMetatypeP", "s:s15BitwiseCopyableP"]
 
@@ -108,6 +119,7 @@ struct UnusedDeclarationUsage {
 
         referenced = collectedInfo.values.reduce(into: Self.propertiesUsedByGeneratedCoding(facts, inheritance)) {
             $0.formUnion($1.referenced)
+            $0.formUnion($1.typeFacts.runBySwiftTesting)
         }
 
         var usedMembers = Set<Member>()

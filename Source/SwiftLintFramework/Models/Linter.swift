@@ -288,6 +288,7 @@ public struct Linter {
         // Only collecting rules have something to do here. Skipping all others matters because this step runs for
         // every file, including files whose violations are served from the cache.
         let rules = preparedRules.collectingRules
+        let compilerArguments = file.compilerArgumentsWithoutTestingMacros(compilerArguments)
         let collect = { (rule: any Rule) in
             CurrentRule.$identifier.withValue(type(of: rule).identifier) {
                 rule.collectInfo(for: file, into: storage, compilerArguments: compilerArguments)
@@ -370,6 +371,7 @@ public struct CollectedLinter {
         }
 
         let fileProperties = FileProperties(file: file)
+        let compilerArguments = file.compilerArgumentsWithoutTestingMacros(compilerArguments)
         let lint = { @Sendable (rule: PreparedRule) in
             rule.lint(file: file, fileProperties: fileProperties, benchmark: benchmark,
                       storage: storage,
@@ -448,6 +450,8 @@ public struct CollectedLinter {
 
         var corrections = [String: Int]()
         let globalConfiguration = configuration.globalConfiguration
+        // A correction can change the imports. The arguments stay the ones that SourceKit's tree is built with.
+        let compilerArguments = file.compilerArgumentsWithoutTestingMacros(compilerArguments)
         for preparedRule in rules {
             guard let rule = preparedRule.rule as? any CorrectableRule else {
                 continue
