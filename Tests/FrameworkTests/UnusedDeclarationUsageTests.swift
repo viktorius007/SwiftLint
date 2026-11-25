@@ -252,6 +252,27 @@ struct UnusedDeclarationUsageTests {
             """,
         ])
     }
+
+    @Test(.temporaryDirectory)
+    func declarationWithANameForObjectiveCIsUsedThroughThatName() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Foundation
+
+            final class Backing: NSObject {
+                @objc func plain() {}
+                @objc(renamedObject) func renamed() {}
+                @objc(setValue:forName:) func set(value _: Int, name _: String) {}
+                @objc(storedCount) var count = 0
+                func ↓leftover() {}
+            }
+
+            @objc(RenamedProvider) final class Provider: NSObject {}
+
+            _ = Backing()
+            """,
+        ])
+    }
 }
 
 /// Expects `unused_declaration` to report the declarations that follow a `↓` in the sources, and no other.

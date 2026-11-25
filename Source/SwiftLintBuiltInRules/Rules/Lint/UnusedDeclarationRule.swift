@@ -203,7 +203,9 @@ private extension SwiftLintFile {
 
         let cursorInfo = cursorInfo(at: nameOffset, compilerArguments: compilerArguments)
 
-        if cursorInfo?.annotatedDeclaration?.contains("@objc ") == true {
+        // Objective-C can call it by name, also by the one given in `@objc(name)`.
+        if let declaration = cursorInfo?.annotatedDeclaration,
+           declaration.contains("@objc ") || declaration.contains("@objc(") {
             return nil
         }
 
