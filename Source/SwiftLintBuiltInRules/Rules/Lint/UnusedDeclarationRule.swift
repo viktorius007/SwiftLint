@@ -5,6 +5,8 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
     struct FileUSRs: Hashable {
         var referenced: Set<String>
         var declared: Set<DeclaredUSR>
+        /// What the file tells about the types whose members are used without a reference in the index.
+        var typeFacts = UnusedDeclarationUsage.TypeFacts()
 
         fileprivate static var empty: Self { Self(referenced: [], declared: []) }
     }
@@ -12,6 +14,8 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
     struct DeclaredUSR: Hashable {
         let usr: String
         let nameOffset: ByteCount
+        /// Set if the declaration is a member of a type or of an extension.
+        var member: UnusedDeclarationUsage.Member?
     }
 
     typealias FileInfo = FileUSRs
@@ -45,12 +49,14 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
             return .empty
         }
 
+        let (declared, typeFacts) = file.declaredUSRs(index: index,
+                                                      editorOpen: editorOpen,
+                                                      compilerArguments: compilerArguments,
+                                                      configuration: configuration)
         return FileUSRs(
             referenced: file.referencedUSRs(index: index, editorOpen: editorOpen),
-            declared: file.declaredUSRs(index: index,
-                                        editorOpen: editorOpen,
-                                        compilerArguments: compilerArguments,
-                                        configuration: configuration)
+            declared: declared,
+            typeFacts: typeFacts
         )
     }
 
@@ -59,40 +65,33 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
                   compilerArguments _: [String]) -> [StyleViolation] {
         violations(in: file,
                    declaredUSRs: collectedInfo[file]?.declared ?? [],
-                   allReferencedUSRs: Self.allReferencedUSRs(in: collectedInfo))
+                   usage: UnusedDeclarationUsage(of: collectedInfo))
     }
 
     func validate(file: SwiftLintFile, using storage: RuleStorage, compilerArguments _: [String]) -> [StyleViolation] {
-        // The set of all referenced USRs is the same for every file and large. Building it for every file would
-        // take time that grows with the square of the number of files.
+        // What all files use is the same for every file and large. Building it for every file would take time
+        // that grows with the square of the number of files.
         violations(in: file,
                    declaredUSRs: storage.collectedInfo(for: self, file: file)?.declared ?? [],
-                   allReferencedUSRs: storage.summary(for: self, compute: Self.allReferencedUSRs))
-    }
-
-    private static func allReferencedUSRs(in collectedInfo: [SwiftLintFile: Self.FileUSRs]) -> Set<String> {
-        collectedInfo.values.reduce(into: Set()) { $0.formUnion($1.referenced) }
+                   usage: storage.summary(for: self, compute: UnusedDeclarationUsage.init))
     }
 
     private func violations(in file: SwiftLintFile,
                             declaredUSRs: Set<DeclaredUSR>,
-                            allReferencedUSRs: Set<String>) -> [StyleViolation] {
-        violationOffsets(declaredUSRs: declaredUSRs, allReferencedUSRs: allReferencedUSRs)
+                            usage: UnusedDeclarationUsage) -> [StyleViolation] {
+        // Unused declarations are:
+        // 1. all declarations
+        // 2. minus all references
+        // 3. minus what the language uses on its own
+        declaredUSRs
+            .filter { !usage.contains($0) }
+            .map(\.nameOffset)
+            .sorted()
             .map {
                 StyleViolation(ruleDescription: Self.description,
                                severity: configuration.severityConfiguration.severity,
                                location: Location(file: file, byteOffset: $0))
             }
-    }
-
-    private func violationOffsets(declaredUSRs: Set<DeclaredUSR>, allReferencedUSRs: Set<String>) -> [ByteCount] {
-        // Unused declarations are:
-        // 1. all declarations
-        // 2. minus all references
-        declaredUSRs
-            .filter { !allReferencedUSRs.contains($0.usr) }
-            .map(\.nameOffset)
-            .sorted()
     }
 }
 
@@ -101,6 +100,10 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
 private extension SwiftLintFile {
     func referencedUSRs(index: SourceKittenDictionary, editorOpen: SourceKittenDictionary) -> Set<String> {
         Set(index.traverseEntitiesDepthFirst { parent, entity -> String? in
+            if entity.isWitnessDeclaredElsewhere {
+                return entity.usr
+            }
+
             if let usr = entity.usr,
                let kind = entity.kind,
                kind.starts(with: "source.lang.swift.ref"),
@@ -119,11 +122,19 @@ private extension SwiftLintFile {
     func declaredUSRs(index: SourceKittenDictionary,
                       editorOpen: SourceKittenDictionary,
                       compilerArguments: [String],
-                      configuration: UnusedDeclarationConfiguration) -> Set<UnusedDeclarationRule.DeclaredUSR> {
-        Set(index.traverseEntitiesDepthFirst { _, indexEntity in
-            self.declaredUSR(indexEntity: indexEntity, editorOpen: editorOpen, compilerArguments: compilerArguments,
-                             configuration: configuration)
-        })
+                      configuration: UnusedDeclarationConfiguration)
+        -> (declared: Set<UnusedDeclarationRule.DeclaredUSR>, typeFacts: UnusedDeclarationUsage.TypeFacts) {
+        var collector = UnusedDeclarationUsage.TypeFactsCollector()
+        let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
+            let member = collector.visit(indexEntity, in: parent)
+            var declared = self.declaredUSR(indexEntity: indexEntity,
+                                            editorOpen: editorOpen,
+                                            compilerArguments: compilerArguments,
+                                            configuration: configuration)
+            declared?.member = member
+            return declared
+        }
+        return (Set(declared), collector.facts)
     }
 
     func declaredUSR(indexEntity: SourceKittenDictionary,
@@ -269,6 +280,17 @@ private extension SourceKittenDictionary {
 
     var isImplicit: Bool {
         value["key.is_implicit"] as? Bool == true
+    }
+
+    /// Where a type conforms to a protocol and a requirement's witness is declared elsewhere (in another
+    /// extension, another file, a superclass or a protocol extension), the index lists the witness under the
+    /// conforming declaration: as an implicit declaration with the witness's USR that is related to the
+    /// requirement. It is the only trace of that use in the index. A witness inside the conforming declaration
+    /// is related to the requirement itself and is not reported for that reason.
+    var isWitnessDeclaredElsewhere: Bool {
+        isImplicit
+            && kind?.starts(with: "source.lang.swift.decl.") == true
+            && (value["key.related"] as? [any SourceKitRepresentable])?.isEmpty == false
     }
 
     func propertyAtOffset<T>(_ offset: ByteCount, property: KeyPath<Self, T?>) -> T? {
