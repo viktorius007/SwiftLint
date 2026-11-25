@@ -52,6 +52,40 @@ struct CompilerInvocationsTests {
         #expect(invocations.first?.contains("/plugins/testing#/bin/plugin-server") == true)
     }
 
+    // What the compiler reads from each line was established with `swiftc -typecheck @file` on Swift 6.4.2.
+    @Test(.temporaryDirectory, arguments: [
+        (##"a\\\#b.swift"##, [##"a\#b.swift"##]),
+        (#"a\ b.swift"#, ["a b.swift"]),
+        (#""a b.swift" 'c d.swift'"#, ["a b.swift", "c d.swift"]),
+        (#""a\"b.swift" 'c\'d.swift'"#, [#"a"b.swift"#, "c'd.swift"]),
+        (#""a'b.swift""#, ["ab.swift"]),
+        (#"a"b c"d.swift"#, ["ab cd.swift"]),
+        ("a.swift\tb.swift  c.swift", ["a.swift", "b.swift", "c.swift"]),
+        ("// a.swift\nb.swift", ["b.swift"]),
+        (#"a\nb.swift"#, ["anb.swift"]),
+    ])
+    func responseFileIsReadAsTheCompilerReadsIt(contents: String, arguments: [String]) throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try contents.write(to: responseFile, atomically: true, encoding: .utf8)
+        let log = "swiftc -module-name Sample @\(responseFile.filepath)"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == arguments)
+    }
+
+    // The compiler warns that the file "is recursively expanded" and goes on without it.
+    @Test(.temporaryDirectory)
+    func responseFileThatNamesItselfIsExpandedOnce() throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try "A.swift\n@\(responseFile.filepath)\nB.swift\n".write(to: responseFile, atomically: true, encoding: .utf8)
+        let log = "swiftc -module-name Sample @\(responseFile.filepath)"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == ["A.swift", "B.swift"])
+    }
+
     @Test
     func argumentThatIsNoPartOfABuildLogKeepsItsBackslash() {
         let path = ##"Sources/With\#Hash.swift"##

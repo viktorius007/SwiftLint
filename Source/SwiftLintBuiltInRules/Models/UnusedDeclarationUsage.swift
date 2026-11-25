@@ -1,6 +1,3 @@
-import SourceKittenFramework
-import SwiftSyntax
-
 // The index holds no reference for some uses of a declaration. This file finds the ones that follow from facts
 // about the declaration's type:
 //
@@ -9,13 +6,17 @@ import SwiftSyntax
 // * `wrappedValue` and `projectedValue` are read by the properties that a property wrapper is applied to.
 // * The stored properties of a type are written by the `init(from:)` and read by the `encode(to:)` that the
 //   compiler generates for `Decodable` and `Encodable`. The index does not list a generated one. It marks a
-//   declared one, and one that a subclass inherits, as satisfying the protocol's requirement.
+//   declared one, and one that a subclass inherits, as satisfying the protocol's requirement. Where it leaves
+//   the conformance out (see below), a declared one is known by its name and the type of its parameter.
 // * A conformance uses the members that satisfy the protocol's requirements. The index lists these witnesses
 //   under the conforming declaration (see `isWitnessDeclaredElsewhere`), with one exception: the compiler leaves
 //   an extension without members out of the index if none of its inherited types is a single protocol or class,
 //   as in `extension T: P & Q {}` or with a type alias of such a composition. For these extensions, a member
 //   counts as a witness if a requirement of one of the protocols has its name, and if the type could find it:
-//   in itself, in what it inherits from, or at file scope for an operator.
+//   in itself, in what it inherits from, or at file scope for an operator. The requirements of a protocol that
+//   no linted file declares are not known. Then everything the type inherits and every operator at file scope
+//   counts as a witness. The type's own members do not: SourceKit tells for each of them whether it satisfies
+//   a requirement.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves
 // out are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it
@@ -31,6 +32,9 @@ struct UnusedDeclarationUsage {
         /// operator at file scope.
         let type: String
         let name: Name
+
+        /// Stands for the type of an operator at file scope.
+        static let fileScope = ""
     }
 
     struct Name: Hashable {
@@ -65,56 +69,49 @@ struct UnusedDeclarationUsage {
         var typesWithOwnDecoding = Set<String>()
         /// Types with a declaration that satisfies `Encodable`'s `encode(to:)`.
         var typesWithOwnEncoding = Set<String>()
+        /// The types, protocols, type aliases and generic parameters that the file declares.
+        var declaredTypes = Set<String>()
     }
 
-    fileprivate static let decodable = "s:Se"
-    fileprivate static let encodable = "s:SE"
-    fileprivate static let decodingRequirement = "s:Se4fromxs7Decoder_p_tKcfc"
-    fileprivate static let encodingRequirement = "s:SE6encode2toys7Encoder_p_tKF"
+    static let decodable = "s:Se"
+    static let encodable = "s:SE"
+    static let codable = "s:s7Codablea"
+    static let decodingRequirement = "s:Se4fromxs7Decoder_p_tKcfc"
+    static let encodingRequirement = "s:SE6encode2toys7Encoder_p_tKF"
+    /// What ends the USR of every `init(from: any Decoder) throws`.
+    static let decodingWitnessSuffix = "s7Decoder_p_tKcfc"
+    /// What ends the USR of every `func encode(to: any Encoder) throws`.
+    static let encodingWitnessSuffix = "6encode2toys7Encoder_p_tKF"
+    /// Protocols of the standard library that cannot have requirements.
+    private static let markerProtocols: Set = ["s:s8SendableP", "s:s16SendableMetatypeP", "s:s15BitwiseCopyableP"]
 
     private let referenced: Set<String>
     private let usedMembers: Set<Member>
     /// For each type that can hold a witness of a conformance missing from the index: the requirements of
-    /// each such conformance.
-    private let witnessNames: [String: [Set<Name>]]
+    /// these conformances.
+    private let witnessNames: [String: Set<Name>]
+    /// The types that can hold a witness of a conformance missing from the index to a protocol with unknown
+    /// requirements.
+    private let ownersOfUnknownWitnesses: Set<String>
 
     init(of collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs]) {
-        var referenced = collectedInfo.values.reduce(into: Set()) { $0.formUnion($1.referenced) }
         let facts = collectedInfo.values.map(\.typeFacts)
         let missingConformances = facts.reduce(into: [String: Set<String>]()) { all, facts in
             all.merge(facts.conformancesMissingFromIndex) { $0.union($1) }
         }
-        let inherited = facts.reduce(into: missingConformances) { all, facts in
+        var inherited = facts.reduce(into: missingConformances) { all, facts in
             all.merge(facts.inherited) { $0.union($1) }
         }
-        let requirements = facts.reduce(into: [String: Set<Name>]()) { all, facts in
-            all.merge(facts.requirements) { $0.union($1) }
-        }
-        /// The given types with everything they inherit from, directly or not.
-        func withInherited(_ types: some Sequence<String>) -> Set<String> {
-            var result = Set<String>()
-            var typesToVisit = Array(types)
-            while let type = typesToVisit.popLast() {
-                if result.insert(type).inserted {
-                    typesToVisit.append(contentsOf: inherited[type] ?? [])
-                }
-            }
-            return result
-        }
+        // `Codable` and its two protocols are the ones of the standard library that this file knows.
+        inherited[Self.codable, default: []].formUnion([Self.decodable, Self.encodable])
+        let inheritance = Inheritance(inherited)
 
-        let typesWithOwnDecoding = facts.reduce(into: Set()) { $0.formUnion($1.typesWithOwnDecoding) }
-        let typesWithOwnEncoding = facts.reduce(into: Set()) { $0.formUnion($1.typesWithOwnEncoding) }
-        for (type, properties) in facts.flatMap(\.storedProperties) {
-            let inherited = withInherited([type])
-            if inherited.contains(Self.decodable) && !typesWithOwnDecoding.contains(type)
-                || inherited.contains(Self.encodable) && !typesWithOwnEncoding.contains(type) {
-                referenced.formUnion(properties)
-            }
+        referenced = collectedInfo.values.reduce(into: Self.propertiesUsedByGeneratedCoding(facts, inheritance)) {
+            $0.formUnion($1.referenced)
         }
-        self.referenced = referenced
 
         var usedMembers = Set<Member>()
-        for owner in withInherited(facts.flatMap(\.entryPoints)) {
+        for owner in inheritance.withInherited(facts.flatMap(\.entryPoints)) {
             usedMembers.insert(Member(type: owner, name: Name(name: "main()", kind: .static)))
         }
         for type in facts.flatMap(\.propertyWrappers) {
@@ -123,18 +120,49 @@ struct UnusedDeclarationUsage {
         }
         self.usedMembers = usedMembers
 
-        var witnessNames = [String: [Set<Name>]]()
+        var requirements = facts.reduce(into: [String: Set<Name>]()) { all, facts in
+            all.merge(facts.requirements) { $0.union($1) }
+        }
+        requirements[Self.encodable, default: []].insert(Name(name: "encode(to:)", kind: .instance))
+        let typesWithKnownRequirements = facts.reduce(
+            into: Self.markerProtocols.union([Self.codable, Self.decodable, Self.encodable])
+        ) { $0.formUnion($1.declaredTypes) }
+        var witnessNames = [String: Set<Name>]()
+        var ownersOfUnknownWitnesses = Set<String>()
         for (type, protocols) in missingConformances {
-            let names = Set(withInherited(protocols).flatMap { requirements[$0] ?? [] })
+            let protocols = inheritance.withInherited(protocols)
+            // A witness can come from the type, a superclass, an extension of a protocol or the file scope.
+            let owners = inheritance.withInherited([type]).union([Member.fileScope])
+            if !protocols.isSubset(of: typesWithKnownRequirements) {
+                ownersOfUnknownWitnesses.formUnion(owners.subtracting([type]))
+            }
+            let names = protocols.flatMap { requirements[$0] ?? [] }
             guard names.isNotEmpty else {
                 continue
             }
-            // A witness can come from the type, a superclass, an extension of a protocol or the file scope.
-            for owner in withInherited([type]).union([Member.fileScope]) {
-                witnessNames[owner, default: []].append(names)
+            for owner in owners {
+                witnessNames[owner, default: []].formUnion(names)
             }
         }
         self.witnessNames = witnessNames
+        self.ownersOfUnknownWitnesses = ownersOfUnknownWitnesses
+    }
+
+    /// The stored properties of the types for which the compiler generates `init(from:)` or `encode(to:)`.
+    private static func propertiesUsedByGeneratedCoding(_ facts: [TypeFacts], _ inheritance: Inheritance)
+        -> Set<String> {
+        let typesWithGeneratedDecoding = facts.reduce(into: inheritance.withHeirs(decodable)) {
+            $0.subtract($1.typesWithOwnDecoding)
+        }
+        let typesWithGeneratedEncoding = facts.reduce(into: inheritance.withHeirs(encodable)) {
+            $0.subtract($1.typesWithOwnEncoding)
+        }
+        var properties = Set<String>()
+        for (type, stored) in facts.flatMap(\.storedProperties)
+        where typesWithGeneratedDecoding.contains(type) || typesWithGeneratedEncoding.contains(type) {
+            properties.formUnion(stored)
+        }
+        return properties
     }
 
     func contains(_ declaration: UnusedDeclarationRule.DeclaredUSR) -> Bool {
@@ -145,246 +173,46 @@ struct UnusedDeclarationUsage {
             return false
         }
         return usedMembers.contains(member)
-            || witnessNames[member.type]?.contains { $0.contains(member.name) } == true
+            || ownersOfUnknownWitnesses.contains(member.type)
+            || witnessNames[member.type]?.contains(member.name) == true
     }
 }
 
-extension UnusedDeclarationUsage {
-    /// Gathers the type facts of one file from the entities of its index, visited in any order.
-    struct TypeFactsCollector {
-        private(set) var facts = TypeFacts()
-        /// The type that the entity at a line and column declares or extends. Looking it up for an extension
-        /// reads all its entities, so it is done once and not for every member.
-        private var types = [Position: String?]()
+/// Which type inherits from which, as all files together tell.
+private struct Inheritance {
+    /// For each type, protocol or type alias: what it inherits from, conforms to or stands for.
+    private let inherited: [String: Set<String>]
+    /// For each of these: what inherits from it, conforms to it or stands for it.
+    private let heirs: [String: [String]]
 
-        /// Notes what the entity tells about types.
-        ///
-        /// - returns: The entity as a member of the type that its parent declares or extends, if it is one.
-        mutating func visit(_ entity: SourceKittenDictionary, in parent: SourceKittenDictionary) -> Member? {
-            guard entity.declarationKind != nil else {
-                if parent.declarationKind == .typealias, entity.isReference, let alias = parent.usr,
-                   let usr = entity.usr {
-                    facts.inherited[alias, default: []].insert(usr)
-                }
-                return nil
+    init(_ inherited: [String: Set<String>]) {
+        self.inherited = inherited
+        heirs = inherited.reduce(into: [:]) { heirs, entry in
+            for type in entry.value {
+                heirs[type, default: []].append(entry.key)
             }
-            if let type = declaredOrExtendedType(of: entity) {
-                noteType(type, declaredOrExtendedBy: entity)
-            }
-            let owner = declaredOrExtendedType(of: parent)
-            if let owner, parent.declarationKind != .protocol {
-                noteCoding(of: owner, by: entity)
-            }
-            guard let name = entity.memberName else {
-                return nil
-            }
-            guard let type = owner else {
-                return entity.isOperator ? Member(type: Member.fileScope, name: name) : nil
-            }
-            if parent.declarationKind == .protocol {
-                // What a protocol declares in its body is a requirement and no witness. Its type aliases are
-                // neither.
-                if entity.declarationKind != .typealias {
-                    facts.requirements[type, default: []].insert(name)
-                }
-                return nil
-            }
-            return Member(type: type, name: name)
-        }
-
-        private mutating func noteType(_ type: String, declaredOrExtendedBy entity: SourceKittenDictionary) {
-            let attributes = entity.enclosedSwiftAttributes
-            if attributes.contains(.main) {
-                facts.entryPoints.insert(type)
-            }
-            if attributes.contains(.propertyWrapper) {
-                facts.propertyWrappers.insert(type)
-            }
-            let related = entity.relatedUSRs
-            if related.isNotEmpty {
-                facts.inherited[type, default: []].formUnion(related)
-            }
-        }
-
-        private mutating func noteCoding(of type: String, by member: SourceKittenDictionary) {
-            let related = member.relatedUSRs
-            if related.contains(UnusedDeclarationUsage.decodingRequirement) {
-                facts.typesWithOwnDecoding.insert(type)
-            }
-            if related.contains(UnusedDeclarationUsage.encodingRequirement) {
-                facts.typesWithOwnEncoding.insert(type)
-            }
-            // The compiler generates the getter of a stored property. Generated coding leaves out a lazy one.
-            if member.declarationKind == .varInstance, let usr = member.usr,
-               member.entities.contains(where: { $0.declarationKind == .functionAccessorGetter && $0.isImplicit }),
-               !member.enclosedSwiftAttributes.contains(.lazy) {
-                facts.storedProperties[type, default: []].insert(usr)
-            }
-        }
-
-        /// USR of the type that the entity declares or extends.
-        private mutating func declaredOrExtendedType(of entity: SourceKittenDictionary) -> String? {
-            switch entity.declarationKind {
-            case .actor, .class, .enum, .protocol, .struct:
-                return entity.usr
-            case .extension, .extensionClass, .extensionEnum, .extensionProtocol, .extensionStruct:
-                break
-            default:
-                return nil
-            }
-            guard let line = entity.line, let column = entity.column else {
-                return nil
-            }
-            let position = Position(line: line, column: column)
-            if let type = types[position] {
-                return type
-            }
-            // An extension's own USR names its first member. The extended type is the reference at its position;
-            // for an extension of a type alias, the alias comes first and what it stands for second.
-            let references = entity.entities.filter { $0.isReference && $0.line == line && $0.column == column }
-            let type = (references.first { !$0.isTypeAliasReference } ?? references.first)?.usr
-            types[position] = type
-            return type
-        }
-    }
-}
-
-extension SwiftLintFile {
-    /// Finds the extensions with inherited types that the file has and its index lacks.
-    ///
-    /// - returns: For each extended type, the inherited types of these extensions.
-    func conformancesMissingFromIndex(_ index: SourceKittenDictionary) -> [String: Set<String>] {
-        // Without the extension, the index has the references to its types at the top level. Apart from the
-        // modules of its imports, few files have references there, and only those are parsed.
-        let topLevelEntities = index.entities
-        guard topLevelEntities.contains(where: { $0.isReference && $0.kind != "source.lang.swift.ref.module" }) else {
-            return [:]
-        }
-        let extensions = ExtensionCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.extensions)
-            .filter { $0.inheritanceClause != nil }
-        let converter = locationConverter
-        var offsetsOfIndexedExtensions = Set<Int>()
-        var referencesByOffset = [Int: [SourceKittenDictionary]]()
-        for entity in topLevelEntities {
-            guard let line = entity.line, let column = entity.column else {
-                continue
-            }
-            // The converter counts lines like the compiler does, also for files with carriage returns.
-            let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
-            if entity.kind?.starts(with: "source.lang.swift.decl.extension") == true {
-                offsetsOfIndexedExtensions.insert(offset)
-            } else if entity.isReference {
-                referencesByOffset[offset, default: []].append(entity)
-            }
-        }
-        var conformances = [String: Set<String>]()
-        for node in extensions {
-            // The index places an extension at the name of the extended type: at `B` for `A.B<C>`.
-            guard let offset = node.extendedType.nameTokens.first?.positionAfterSkippingLeadingTrivia.utf8Offset,
-                  !offsetsOfIndexedExtensions.contains(offset),
-                  let extended = referencesByOffset[offset],
-                  let type = (extended.first { !$0.isTypeAliasReference } ?? extended.first)?.usr,
-                  let inheritance = node.inheritanceClause else {
-                continue
-            }
-            // The names only: a generic argument of an inherited type is referenced, and not inherited.
-            let inherited = inheritance.inheritedTypes.flatMap(\.type.nameTokens)
-                .flatMap { referencesByOffset[$0.positionAfterSkippingLeadingTrivia.utf8Offset] ?? [] }
-                .compactMap(\.usr)
-            conformances[type, default: []].formUnion(inherited)
-        }
-        return conformances
-    }
-}
-
-private extension SourceKittenDictionary {
-    /// The name by which a type would find this declaration as its member.
-    var memberName: UnusedDeclarationUsage.Name? {
-        guard let kind = declarationKind, let name else {
-            return nil
-        }
-        switch kind {
-        case .functionMethodInstance, .varInstance:
-            return UnusedDeclarationUsage.Name(name: name, kind: .instance)
-        case .functionMethodClass, .functionMethodStatic, .varClass, .varStatic,
-             .functionOperator, .functionOperatorInfix, .functionOperatorPostfix, .functionOperatorPrefix:
-            return UnusedDeclarationUsage.Name(name: name, kind: .static)
-        case .actor, .associatedtype, .class, .enum, .struct, .typealias:
-            return UnusedDeclarationUsage.Name(name: name, kind: .type)
-        default:
-            return nil
         }
     }
 
-    var isOperator: Bool {
-        switch declarationKind {
-        case .functionOperator, .functionOperatorInfix, .functionOperatorPostfix, .functionOperatorPrefix: true
-        default: false
-        }
+    /// The given types with everything they inherit from, directly or not.
+    func withInherited(_ types: some Sequence<String>) -> Set<String> {
+        Self.closure(of: types) { inherited[$0] ?? [] }
     }
 
-    var isReference: Bool {
-        kind?.starts(with: "source.lang.swift.ref.") == true
+    /// The given type with everything that inherits from it, directly or not.
+    func withHeirs(_ type: String) -> Set<String> {
+        Self.closure(of: [type]) { heirs[$0] ?? [] }
     }
 
-    var isTypeAliasReference: Bool {
-        kind == "source.lang.swift.ref.typealias"
-    }
-
-    var isImplicit: Bool {
-        value["key.is_implicit"] as? Bool == true
-    }
-
-    var relatedUSRs: [String] {
-        (value["key.related"] as? [[String: any SourceKitRepresentable]])?.compactMap { $0["key.usr"] as? String }
-            ?? []
-    }
-
-    var usr: String? {
-        value["key.usr"] as? String
-    }
-}
-
-private extension UnusedDeclarationUsage.Member {
-    static let fileScope = ""
-}
-
-private extension TypeSyntax {
-    /// The tokens that name the types this type is made of, without their qualifiers and generic arguments:
-    /// `B` for `A.B<C>`, `P` and `Q` for `P & Q`.
-    var nameTokens: [TokenSyntax] {
-        if let type = `as`(IdentifierTypeSyntax.self) {
-            return [type.name]
+    private static func closure<Next: Sequence<String>>(of types: some Sequence<String>, next: (String) -> Next)
+        -> Set<String> {
+        var result = Set<String>()
+        var typesToVisit = Array(types)
+        while let type = typesToVisit.popLast() {
+            if result.insert(type).inserted {
+                typesToVisit.append(contentsOf: next(type))
+            }
         }
-        if let type = `as`(MemberTypeSyntax.self) {
-            return [type.name]
-        }
-        if let type = `as`(CompositionTypeSyntax.self) {
-            return type.elements.flatMap(\.type.nameTokens)
-        }
-        if let type = `as`(AttributedTypeSyntax.self) {
-            return type.baseType.nameTokens
-        }
-        if let type = `as`(SomeOrAnyTypeSyntax.self) {
-            return type.constraint.nameTokens
-        }
-        if let type = `as`(TupleTypeSyntax.self), type.elements.count == 1, let element = type.elements.first {
-            return element.type.nameTokens
-        }
-        return []
-    }
-}
-
-private struct Position: Hashable {
-    let line: Int64
-    let column: Int64
-}
-
-private final class ExtensionCollector: SyntaxVisitor {
-    private(set) var extensions = [ExtensionDeclSyntax]()
-
-    override func visit(_ node: ExtensionDeclSyntax) -> SyntaxVisitorContinueKind {
-        extensions.append(node)
-        return .skipChildren
+        return result
     }
 }

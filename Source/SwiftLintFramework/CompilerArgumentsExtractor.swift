@@ -39,6 +39,41 @@ private func parseCLIArguments(_ string: String) -> [String] {
         .map { $0.replacingOccurrences(of: escapedSpacePlaceholder, with: " ") }
 }
 
+/// Splits a line of a response file into arguments the way the compiler does: a backslash makes the next
+/// character an ordinary one, a quote of either kind starts or ends a part in which whitespace separates
+/// nothing, and a line that starts with `//` is a comment.
+private func parseResponseFileLine(_ line: Substring) -> [String] {
+    guard !line.hasPrefix("//") else {
+        return []
+    }
+    var arguments = [String]()
+    var argument = ""
+    var isEscaped = false
+    var isQuoted = false
+    for character in line {
+        if isEscaped {
+            isEscaped = false
+        } else if character == "\\" {
+            isEscaped = true
+            continue
+        } else if character == "\"" || character == "'" {
+            isQuoted.toggle()
+            continue
+        } else if character.isWhitespace, !isQuoted {
+            if argument.isNotEmpty {
+                arguments.append(argument)
+                argument = ""
+            }
+            continue
+        }
+        argument.append(character)
+    }
+    if argument.isNotEmpty {
+        arguments.append(argument)
+    }
+    return arguments
+}
+
 /**
  Partially filters compiler arguments from `xcodebuild` to something that SourceKit/Clang will accept.
 
@@ -60,17 +95,23 @@ private func partiallyFilter(arguments args: [String]) -> ([String], Bool) {
 extension Array where Element == String {
     /// Return the full list of compiler arguments, replacing any response files with their contents.
     fileprivate var expandingResponseFiles: [String] {
+        expandingResponseFiles(within: [])
+    }
+
+    /// - parameter openFiles: The response files that are being expanded. Like the compiler, this leaves out one
+    ///                        of them that it meets again.
+    private func expandingResponseFiles(within openFiles: Set<String>) -> [String] {
         flatMap { arg -> [String] in
             guard arg.starts(with: "@") else {
                 return [arg]
             }
             let responseFile = String(arg.dropFirst())
-            return (try? String(contentsOf: URL(filePath: responseFile, directoryHint: .notDirectory))).flatMap {
-                $0.trimmingCharacters(in: .newlines)
-                    .components(separatedBy: "\n")
-                    // The compiler reads `\#` in a response file as `#`.
-                    .map { $0.replacingOccurrences(of: "\\#", with: "#") }
-                    .expandingResponseFiles
+            guard !openFiles.contains(responseFile) else {
+                return []
+            }
+            return (try? String(contentsOf: URL(filePath: responseFile, directoryHint: .notDirectory))).map {
+                $0.split(whereSeparator: \.isNewline).flatMap(parseResponseFileLine)
+                    .expandingResponseFiles(within: openFiles.union([responseFile]))
             } ?? [arg]
         }
     }
