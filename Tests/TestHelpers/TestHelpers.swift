@@ -48,7 +48,7 @@ private let info: PlatformInfo = {
 private let violationMarker = "↓"
 private let violationMarkerChar = violationMarker.first!
 
-private extension SwiftLintFile {
+package extension SwiftLintFile {
     static func testFile(withContents contents: String, persistToDisk: Bool = false) -> SwiftLintFile {
         if persistToDisk {
             let url = URL.temporaryDirectory

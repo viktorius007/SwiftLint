@@ -5,6 +5,13 @@ import SourceKittenFramework
 /// expensive and the value is queried for every rule and file.
 private let isSourceKitDisabledByEnvironment = ProcessInfo.processInfo.environment["SWIFTLINT_DISABLE_SOURCEKIT"] != nil
 
+package enum SourceKitRequestObserver {
+    /// Receives every request that the current task sends to SourceKit, right before it is sent.
+    ///
+    /// Tests set this to check which requests a piece of code makes.
+    @TaskLocal package static var current: (@Sendable (Request) -> Void)?
+}
+
 public extension Request {
     nonisolated(unsafe) static var disableSourceKitOverride = false
 
@@ -53,7 +60,41 @@ public extension Request {
         guard !Self.disableSourceKit else {
             queuedFatalError("SourceKit is disabled by configuration.")
         }
+        SourceKitRequestObserver.current?(self)
         return try send()
+    }
+
+    /// Makes SourceKit drop the type-checked syntax tree it caches for a file.
+    ///
+    /// SourceKit keeps one such tree per file and set of compiler arguments, and each tree holds the whole module.
+    /// It only removes a tree when an editor document with the same file and arguments is closed. So this opens
+    /// such a document, without asking for any syntax information, and closes it again.
+    ///
+    /// - parameter file:      The path of the file as passed to the requests that built the tree.
+    /// - parameter arguments: The compiler arguments as passed to the requests that built the tree.
+    static func releaseCachedSyntaxTree(file: String, arguments: [String]) {
+        guard !disableSourceKit, arguments.isNotEmpty else {
+            return
+        }
+        let open: SourceKitObject = [
+            "key.request": UID("source.request.editor.open"),
+            "key.name": file,
+            "key.sourcefile": file,
+            "key.compilerargs": arguments,
+            "key.syntactic_only": 1,
+            "key.enablesyntaxmap": 0,
+            "key.enablesubstructure": 0,
+            "key.enablediagnostics": 0,
+        ]
+        let close: SourceKitObject = [
+            "key.request": UID("source.request.editor.close"),
+            "key.name": file,
+        ]
+        CurrentRule.$allowSourceKitRequestWithoutRule.withValue(true) {
+            for request in [open, close] {
+                _ = try? Self.customRequest(request: request).sendIfNotDisabled()
+            }
+        }
     }
 
     static func cursorInfoWithoutSymbolGraph(file: String, offset: ByteCount, arguments: [String]) -> Request {

@@ -4,7 +4,13 @@ import SourceKittenFramework
 private let moduleToLog = ProcessInfo.processInfo.environment["SWIFTLINT_LOG_MODULE_USAGE"]
 
 @DisabledWithoutSourceKit
-struct UnusedImportRule: CorrectableRule, AnalyzerRule {
+struct UnusedImportRule: CorrectableRule, AnalyzerRule, CollectingRule {
+    /// The unused and missing imports of one file.
+    ///
+    /// The rule needs no knowledge of other files. It collects its result per file anyway, so that SourceKit
+    /// type-checks a file once for all analyzer rules instead of once in each of the two passes.
+    typealias FileInfo = [ImportUsage]
+
     var configuration = UnusedImportConfiguration()
 
     static let description = RuleDescription(
@@ -18,8 +24,14 @@ struct UnusedImportRule: CorrectableRule, AnalyzerRule {
         requiresFileOnDisk: true
     )
 
-    func validate(file: SwiftLintFile, compilerArguments: [String]) -> [StyleViolation] {
-        importUsage(in: file, compilerArguments: compilerArguments).map { importUsage in
+    func collectInfo(for file: SwiftLintFile, compilerArguments: [String]) -> [ImportUsage] {
+        importUsage(in: file, compilerArguments: compilerArguments)
+    }
+
+    func validate(file: SwiftLintFile,
+                  collectedInfo: [SwiftLintFile: [ImportUsage]],
+                  compilerArguments _: [String]) -> [StyleViolation] {
+        (collectedInfo[file] ?? []).map { importUsage in
             StyleViolation(ruleDescription: Self.description,
                            severity: configuration.severity,
                            location: Location(file: file, characterOffset: importUsage.violationRange?.location ?? 1),
@@ -90,7 +102,11 @@ struct UnusedImportRule: CorrectableRule, AnalyzerRule {
 
 private extension SwiftLintFile {
     func getImportUsage(compilerArguments: [String], configuration: UnusedImportConfiguration) -> [ImportUsage] {
-        var (imports, usrFragments) = getImportsAndUSRFragments(compilerArguments: compilerArguments)
+        let currentModule = (compilerArguments.firstIndex(of: "-module-name")?.advanced(by: 1))
+            .map { compilerArguments[$0] }
+        var (imports, usrFragments) = getImportsAndUSRFragments(
+            compilerArguments: compilerArguments, currentModule: currentModule
+        )
 
         // Always disallow 'Swift' and 'SwiftShims' because they're always available without importing.
         usrFragments.remove("Swift")
@@ -115,9 +131,6 @@ private extension SwiftLintFile {
         }
 
         // Find the missing imports, which should be imported, but are not.
-        let currentModule = (compilerArguments.firstIndex(of: "-module-name")?.advanced(by: 1))
-            .map { compilerArguments[$0] }
-
         var missingImports = usrFragments
             .subtracting(imports + [currentModule].compactMap(\.self))
             .filter { module in
@@ -155,10 +168,16 @@ private extension SwiftLintFile {
             : unusedImportUsages
     }
 
-    func getImportsAndUSRFragments(compilerArguments: [String]) -> (imports: Set<String>, usrFragments: Set<String>) {
+    func getImportsAndUSRFragments(
+        compilerArguments: [String], currentModule: String?
+    ) -> (imports: Set<String>, usrFragments: Set<String>) {
         var imports = Set<String>()
         var usrFragments = Set<String>()
         var nextIsModuleImport = false
+        // A cursor info request is expensive, so as few tokens as possible get one.
+        var shortcuts = moduleToLog == nil
+            ? ImportUsageShortcuts(file: self, compilerArguments: compilerArguments, currentModule: currentModule)
+            : ImportUsageShortcuts()
         for token in syntaxMap.tokens {
             guard let tokenKind = token.kind else {
                 continue
@@ -168,6 +187,11 @@ private extension SwiftLintFile {
                 continue
             }
             if SyntaxKind.kindsWithoutModuleInfo.contains(tokenKind) {
+                continue
+            }
+            let isModuleImport = nextIsModuleImport
+            if !isModuleImport, let modules = shortcuts.knownModules(at: token.offset) {
+                usrFragments.formUnion(modules)
                 continue
             }
             let cursorInfoRequest = Request.cursorInfoWithoutSymbolGraph(
@@ -186,15 +210,23 @@ private extension SwiftLintFile {
                 }
             }
 
-            appendUsedImports(cursorInfo: cursorInfo, usrFragments: &usrFragments)
-
             // also collect modules from secondary symbol usage if available
-            for secondaryInfo in cursorInfo.secondarySymbols {
-                appendUsedImports(cursorInfo: secondaryInfo, usrFragments: &usrFragments)
+            let usage = symbolUsage(of: [cursorInfo] + cursorInfo.secondarySymbols)
+            usrFragments.formUnion(usage.modules)
+            if !isModuleImport {
+                shortcuts.remember(usage, at: token.offset)
             }
         }
 
         return (imports: imports, usrFragments: usrFragments)
+    }
+
+    func symbolUsage(of symbols: [SourceKittenDictionary]) -> ImportUsageShortcuts.SymbolUsage {
+        var modules = Set<String>()
+        for symbol in symbols {
+            appendUsedImports(cursorInfo: symbol, usrFragments: &modules)
+        }
+        return .init(modules: modules, kinds: symbols.compactMap(\.kind))
     }
 
     func rangedAndSortedUnusedImports(of unusedImports: [String]) -> [(String, NSRange)] {
@@ -211,8 +243,7 @@ private extension SwiftLintFile {
 
     // Operators are omitted in the editor.open request and thus have to be looked up by the indexsource request
     func operatorImports(arguments: [String], processedTokenOffsets: Set<ByteCount>) -> Set<String> {
-        guard let index = (try? Request.index(file: path!.filepath, arguments: arguments).sendIfNotDisabled())
-                .map(SourceKittenDictionary.init) else {
+        guard let index = index(compilerArguments: arguments) else {
             Issue.indexingError(path: path, ruleID: UnusedImportRule.identifier).print()
             return []
         }

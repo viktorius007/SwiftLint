@@ -288,12 +288,21 @@ public struct Linter {
         // Only collecting rules have something to do here. Skipping all others matters because this step runs for
         // every file, including files whose violations are served from the cache.
         let rules = preparedRules.collectingRules
-        DispatchQueue.concurrentPerform(iterations: rules.count) { idx in
-            let rule = rules[idx]
-            let ruleID = type(of: rule).identifier
-            CurrentRule.$identifier.withValue(ruleID) {
+        let collect = { (rule: any Rule) in
+            CurrentRule.$identifier.withValue(type(of: rule).identifier) {
                 rule.collectInfo(for: file, into: storage, compilerArguments: compilerArguments)
             }
+        }
+        if compilerArguments.isEmpty {
+            DispatchQueue.concurrentPerform(iterations: rules.count) { collect(rules[$0]) }
+        } else {
+            // Analyzer rules make SourceKit type-check the file. Two type checks at the same time can crash
+            // SourceKit when both expand macros, so these rules run one after another.
+            rules.forEach(collect)
+            // All files are collected before the first one is validated. Whatever is kept for a file until then
+            // adds up over all files, so nothing derived from this file is kept, neither here nor in SourceKit.
+            file.invalidateCache()
+            file.releaseCachedSyntaxTree(compilerArguments: compilerArguments)
         }
         return CollectedLinter(from: self)
     }
@@ -368,10 +377,10 @@ public struct CollectedLinter {
                       globalConfiguration: configuration.globalConfiguration,
                       compilerArguments: compilerArguments)
         }
-        let validationResults: [LintResult] =
-            isLintedAlongsideManyFiles && file.contents.utf8.count < Self.minimumSizeForParallelRules
-                ? rules.map(lint)
-                : rules.parallelMap(transform: lint)
+        // Analyzer rules run one after another for the reason given in `Linter.collect(into:)`.
+        let runsRulesSerially = compilerArguments.isNotEmpty
+            || isLintedAlongsideManyFiles && file.contents.utf8.count < Self.minimumSizeForParallelRules
+        let validationResults = runsRulesSerially ? rules.map(lint) : rules.parallelMap(transform: lint)
         let undefinedSuperfluousCommandViolations = undefinedSuperfluousCommandViolations(
             regions: fileProperties.regions, configuration: configuration,
             superfluousDisableCommandRule: superfluousDisableCommandRule)
@@ -393,6 +402,7 @@ public struct CollectedLinter {
 
         // Free some memory used for this file's caches. They shouldn't be needed after this point.
         file.invalidateCache()
+        file.releaseCachedSyntaxTree(compilerArguments: compilerArguments)
 
         return (violations, ruleTimes)
     }
@@ -458,6 +468,7 @@ public struct CollectedLinter {
                 }
             }
         }
+        file.releaseCachedSyntaxTree(compilerArguments: compilerArguments)
         return corrections
     }
 
@@ -509,5 +520,16 @@ public struct CollectedLinter {
 private extension SwiftLintFile {
     var isEmpty: Bool {
         contents.isEmpty || contents == "\n"
+    }
+}
+
+private extension SwiftLintFile {
+    /// Makes SourceKit drop the type-checked syntax tree that analyzer rules made it build for this file.
+    ///
+    /// Without this, SourceKit keeps the trees of all analyzed files, and each of them holds the whole module.
+    func releaseCachedSyntaxTree(compilerArguments: [String]) {
+        if let path = path?.filepath {
+            Request.releaseCachedSyntaxTree(file: path, arguments: compilerArguments)
+        }
     }
 }

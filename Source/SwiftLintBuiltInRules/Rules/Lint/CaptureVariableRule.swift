@@ -7,8 +7,16 @@ struct CaptureVariableRule: AnalyzerRule, CollectingRule {
         let offset: ByteCount
     }
 
+    /// What the rule needs to know about one file. Both parts come from the same request to SourceKit, so both are
+    /// collected in the same pass.
+    struct FileInfo {
+        /// The USRs of the mutable variables declared in the file.
+        let declaredVariables: Set<USR>
+        /// The variables listed in closure capture lists of the file.
+        let capturedVariables: Set<Variable>
+    }
+
     typealias USR = String
-    typealias FileInfo = Set<USR>
 
     static let description = RuleDescription(
         identifier: "capture_variable",
@@ -156,14 +164,19 @@ struct CaptureVariableRule: AnalyzerRule, CollectingRule {
     var configuration = SeverityConfiguration<Self>(.warning)
 
     func collectInfo(for file: SwiftLintFile, compilerArguments: [String]) -> Self.FileInfo {
-        file.declaredVariables(compilerArguments: compilerArguments)
+        FileInfo(
+            declaredVariables: file.declaredVariables(compilerArguments: compilerArguments),
+            capturedVariables: file.captureListVariables(compilerArguments: compilerArguments)
+        )
     }
 
     func validate(file: SwiftLintFile,
                   collectedInfo: [SwiftLintFile: Self.FileInfo],
-                  compilerArguments: [String]) -> [StyleViolation] {
-        file.captureListVariables(compilerArguments: compilerArguments)
-            .filter { capturedVariable in collectedInfo.values.contains { $0.contains(capturedVariable.usr) } }
+                  compilerArguments _: [String]) -> [StyleViolation] {
+        (collectedInfo[file]?.capturedVariables ?? [])
+            .filter { capturedVariable in
+                collectedInfo.values.contains { $0.declaredVariables.contains(capturedVariable.usr) }
+            }
             .map {
                 StyleViolation(ruleDescription: Self.description,
                                severity: configuration.severity,
@@ -206,7 +219,9 @@ private extension SwiftLintFile {
 
     func captureListVariables(compilerArguments: [String]) -> Set<CaptureVariableRule.Variable> {
         let offsets = captureListVariableOffsets()
-        guard !offsets.isEmpty, let indexEntities = index(compilerArguments: compilerArguments) else { return Set() }
+        guard !offsets.isEmpty, let indexEntities = indexOrWarn(compilerArguments: compilerArguments) else {
+            return Set()
+        }
 
         return Set(indexEntities.traverseEntitiesDepthFirst { _, entity in
             guard
@@ -245,7 +260,9 @@ private extension SwiftLintFile {
 
     func declaredVariables(compilerArguments: [String]) -> Set<CaptureVariableRule.USR> {
         let offsets = declaredVariableOffsets()
-        guard !offsets.isEmpty, let indexEntities = index(compilerArguments: compilerArguments) else { return Set() }
+        guard !offsets.isEmpty, let indexEntities = indexOrWarn(compilerArguments: compilerArguments) else {
+            return Set()
+        }
 
         return Set(indexEntities.traverseEntitiesDepthFirst { _, entity in
             guard
@@ -260,16 +277,12 @@ private extension SwiftLintFile {
         })
     }
 
-    func index(compilerArguments: [String]) -> SourceKittenDictionary? {
-        guard
-            let path,
-            let response = try? Request.index(file: path.filepath, arguments: compilerArguments).sendIfNotDisabled()
-        else {
+    func indexOrWarn(compilerArguments: [String]) -> SourceKittenDictionary? {
+        guard let index = index(compilerArguments: compilerArguments) else {
             Issue.indexingError(path: path, ruleID: CaptureVariableRule.identifier).print()
             return nil
         }
-
-        return SourceKittenDictionary(response)
+        return index
     }
 }
 

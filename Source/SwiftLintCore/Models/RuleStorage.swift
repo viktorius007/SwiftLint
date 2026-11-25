@@ -3,6 +3,7 @@ import Dispatch
 /// A storage mechanism for aggregating the results of `CollectingRule`s.
 public class RuleStorage: CustomStringConvertible {
     private var storage: [ObjectIdentifier: [SwiftLintFile: Any]]
+    private var summaries = [ObjectIdentifier: Any]()
     private let access = DispatchQueue(label: "io.realm.swiftlint.ruleStorageAccess", attributes: .concurrent)
 
     public var description: String {
@@ -23,6 +24,7 @@ public class RuleStorage: CustomStringConvertible {
         let key = ObjectIdentifier(R.self)
         access.sync(flags: .barrier) {
             storage[key, default: [:]][file] = info
+            summaries[key] = nil
         }
     }
 
@@ -35,5 +37,43 @@ public class RuleStorage: CustomStringConvertible {
         access.sync {
             storage[ObjectIdentifier(R.self)] as? [SwiftLintFile: R.FileInfo]
         }
+    }
+
+    /// Retrieves the information that a rule collected for one file.
+    ///
+    /// Unlike `collectedInfo(for:)`, this does not convert the information of all files.
+    ///
+    /// - parameter rule: The rule whose collected information should be retrieved.
+    /// - parameter file: The file the information pertains to.
+    ///
+    /// - returns: The information collected for the file, if any.
+    public func collectedInfo<R: CollectingRule>(for _: R, file: SwiftLintFile) -> R.FileInfo? {
+        access.sync {
+            storage[ObjectIdentifier(R.self)]?[file] as? R.FileInfo
+        }
+    }
+
+    /// Returns a value that a rule derives from the information it collected for all files.
+    ///
+    /// The value is computed on first use and kept until more information is collected for the rule. A rule that
+    /// needs the same value for every file it validates gets it computed once this way, instead of once per file.
+    ///
+    /// - parameter rule:    The rule whose collected information the value is derived from.
+    /// - parameter compute: Computes the value from the information collected for all files.
+    ///
+    /// - returns: The derived value.
+    public func summary<R: CollectingRule, Summary>(
+        for rule: R,
+        compute: ([SwiftLintFile: R.FileInfo]) -> Summary
+    ) -> Summary {
+        let key = ObjectIdentifier(R.self)
+        if let summary = access.sync(execute: { summaries[key] }) as? Summary {
+            return summary
+        }
+        let summary = compute(collectedInfo(for: rule) ?? [:])
+        access.sync(flags: .barrier) {
+            summaries[key] = summary
+        }
+        return summary
     }
 }

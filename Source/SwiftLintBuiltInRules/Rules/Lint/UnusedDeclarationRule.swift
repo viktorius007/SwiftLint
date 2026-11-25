@@ -57,9 +57,27 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
     func validate(file: SwiftLintFile,
                   collectedInfo: [SwiftLintFile: Self.FileUSRs],
                   compilerArguments _: [String]) -> [StyleViolation] {
-        let allReferencedUSRs = collectedInfo.values.reduce(into: Set()) { $0.formUnion($1.referenced) }
-        return violationOffsets(declaredUSRs: collectedInfo[file]?.declared ?? [],
-                                allReferencedUSRs: allReferencedUSRs)
+        violations(in: file,
+                   declaredUSRs: collectedInfo[file]?.declared ?? [],
+                   allReferencedUSRs: Self.allReferencedUSRs(in: collectedInfo))
+    }
+
+    func validate(file: SwiftLintFile, using storage: RuleStorage, compilerArguments _: [String]) -> [StyleViolation] {
+        // The set of all referenced USRs is the same for every file and large. Building it for every file would
+        // take time that grows with the square of the number of files.
+        violations(in: file,
+                   declaredUSRs: storage.collectedInfo(for: self, file: file)?.declared ?? [],
+                   allReferencedUSRs: storage.summary(for: self, compute: Self.allReferencedUSRs))
+    }
+
+    private static func allReferencedUSRs(in collectedInfo: [SwiftLintFile: Self.FileUSRs]) -> Set<String> {
+        collectedInfo.values.reduce(into: Set()) { $0.formUnion($1.referenced) }
+    }
+
+    private func violations(in file: SwiftLintFile,
+                            declaredUSRs: Set<DeclaredUSR>,
+                            allReferencedUSRs: Set<String>) -> [StyleViolation] {
+        violationOffsets(declaredUSRs: declaredUSRs, allReferencedUSRs: allReferencedUSRs)
             .map {
                 StyleViolation(ruleDescription: Self.description,
                                severity: configuration.severityConfiguration.severity,
@@ -81,14 +99,6 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
 // MARK: - File Extensions
 
 private extension SwiftLintFile {
-    func index(compilerArguments: [String]) -> SourceKittenDictionary? {
-        path
-            .flatMap { path in
-                try? Request.index(file: path.filepath, arguments: compilerArguments).sendIfNotDisabled()
-            }
-            .map(SourceKittenDictionary.init)
-    }
-
     func referencedUSRs(index: SourceKittenDictionary, editorOpen: SourceKittenDictionary) -> Set<String> {
         Set(index.traverseEntitiesDepthFirst { parent, entity -> String? in
             if let usr = entity.usr,

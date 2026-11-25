@@ -58,6 +58,7 @@ final class FileCache: @unchecked Sendable {
     fileprivate var foldedSyntaxTree = Cached<SourceFileSyntax?>.notComputed
     fileprivate var syntaxMap = Cached<SwiftLintSyntaxMap?>.notComputed
     fileprivate var swiftSyntaxTokens = Cached<[SwiftLintSyntaxToken]?>.notComputed
+    fileprivate var index = Cached<SourceKittenDictionary?>.notComputed
     fileprivate var assertHandlerSlot = Cached<AssertHandler?>.notComputed
 
     /// Returns the cached value for a slot, computing it via `factory` on a cache miss.
@@ -143,6 +144,7 @@ final class FileCache: @unchecked Sendable {
             foldedSyntaxTree = .notComputed
             syntaxMap = .notComputed
             swiftSyntaxTokens = .notComputed
+            index = .notComputed
             assertHandlerSlot = .notComputed
         }
     }
@@ -328,6 +330,28 @@ extension SwiftLintFile {
             { EmptyLinesVisitor.emptyLines(in: self) }
             get: { fileCache.emptyLines }
             set: { fileCache.emptyLines = $0 }
+    }
+
+    /// Returns SourceKit's index of this file: all declarations and references SourceKit finds in it.
+    ///
+    /// SourceKit type-checks the whole file for every index request. So the result is kept like all other cached
+    /// data of this file, and all analyzer rules share it. The compiler arguments of a file are the same for all
+    /// rules, which is why they are not part of the cache key.
+    ///
+    /// - parameter compilerArguments: The compiler arguments needed to compile this file.
+    ///
+    /// - returns: The index, or `nil` if the file has no path or the request failed.
+    public func index(compilerArguments: [String]) -> SourceKittenDictionary? {
+        fileCache.getOrCompute
+            {
+                guard let path = path?.filepath else {
+                    return nil
+                }
+                let request = Request.index(file: path, arguments: compilerArguments)
+                return (try? request.sendIfNotDisabled()).map(SourceKittenDictionary.init)
+            }
+            get: { fileCache.index }
+            set: { fileCache.index = $0 }
     }
 
     /// Invalidates all cached data for this file.
