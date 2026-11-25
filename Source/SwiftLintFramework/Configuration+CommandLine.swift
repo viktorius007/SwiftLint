@@ -218,6 +218,14 @@ extension Configuration {
                         queuedPrintError("Collecting '\(outputFilename)' (\(collected)/\(total))")
                     }
                 }
+            } else if skipFile, !visitor.options.quiet, let filePath = linter.file.path {
+                // A file without compiler arguments has no analyzer rules, so it is not counted as collecting.
+                // Without this warning, a compiler log that names none of the files gives an empty result
+                // that looks like a clean one.
+                let outputFilename = self.outputFilename(for: filePath, duplicateFileNames: duplicateFileNames)
+                Issue.genericWarning(
+                    "Skipping '\(outputFilename)' because its compiler arguments could not be found"
+                ).print()
             }
 
             guard !skipFile else {

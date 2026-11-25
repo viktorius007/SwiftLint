@@ -19,21 +19,29 @@ class CompilerInvocations {
     // MARK: - Private
 
     private class ArrayCompilerInvocations: CompilerInvocations {
-        private let invocationsByArgument: [URL: [Arguments]]
+        private let invocationsByPath: [String: Arguments]
 
         init(invocations: [Arguments]) {
-            // Store invocations by the path, so next when we'll be asked for arguments,
-            // we'll be able to return them faster
-            self.invocationsByArgument = invocations.reduce(into: [:]) { result, arguments in
-                arguments.forEach { result[URL(filePath: $0), default: []].append(arguments) }
+            // Store the invocations by the path of every argument, so that the arguments for a file are found
+            // without a search. The first invocation naming a file wins.
+            self.invocationsByPath = invocations.reduce(into: [:]) { result, arguments in
+                for argument in arguments {
+                    let path = Self.key(for: URL(filePath: argument))
+                    if result[path] == nil {
+                        result[path] = arguments
+                    }
+                }
             }
         }
 
         override func arguments(forFile path: URL?) -> Arguments {
-            if let path, let invocation = invocationsByArgument[path]?.first {
-                return invocation
-            }
-            return []
+            path.flatMap { invocationsByPath[Self.key(for: $0)] } ?? []
+        }
+
+        /// The absolute path without `.` and `..`. A build log names files by absolute paths, while the file to
+        /// analyze can be given relative to the working directory. Two URLs for one file are not equal then.
+        private static func key(for path: URL) -> String {
+            path.standardizedFileURL.filepath
         }
     }
 
