@@ -136,6 +136,82 @@ struct UnusedImportEquivalenceTests {
         #expect(linter.collect(into: storage).styleViolations(using: storage).isEmpty)
     }
 
+    @Test(.temporaryDirectory)
+    func systemExtensionInitializerCanBeMissingFromTheIndex() throws {
+        let moduleName = "UnusedImportSystemExtension"
+        try compileModule(named: moduleName, source: Self.hiddenInitializer)
+
+        let linter = try makeLinter(
+            source: """
+                import \(moduleName)
+                public let prior: Int = 0
+                public let answer = Int((20, 22))
+
+                """,
+            compilerFlags: ["-Xfrontend", "-Isystem", "-Xfrontend", URL.cwd.filepath]
+        )
+        let storage = RuleStorage()
+
+        #expect(linter.collect(into: storage).styleViolations(using: storage).isEmpty)
+    }
+
+    @Test(.temporaryDirectory)
+    func indexedTypeReferenceDoesNotInheritAnInitializerFromAnotherFile() throws {
+        let moduleName = "UnusedImportSystemInitializers"
+        try compileModule(named: moduleName, source: Self.hiddenInitializer)
+
+        let linters = try makeLinters(
+            sources: [
+                "import \(moduleName)\npublic let answer = Int((20, 22))\n",
+                "import \(moduleName)\npublic let annotated: Int = 0\n",
+                "public let noImport: Int = 0\n",
+            ],
+            compilerFlags: ["-Xfrontend", "-Isystem", "-Xfrontend", URL.cwd.filepath],
+            requireExplicitImports: true
+        )
+        let storage = RuleStorage()
+
+        let findings = linters.map { $0.collect(into: storage) }.map { linter in
+            linter.styleViolations(using: storage).map(\.reason)
+        }
+        #expect(findings == [[], ["All imported modules should be required to make the file compile"], []])
+    }
+
+    @Test(.temporaryDirectory)
+    func functionNameCanContainAnExtensionModuleMangle() throws {
+        let first = "LibOne"
+        let second = "LibTwo"
+        let name = "x6LibOneE"
+        let abiName = ["-Xfrontend", "-module-abi-name", "-Xfrontend", "UnusedSharedABI"]
+        try compileModule(
+            named: first,
+            source: "@_disfavoredOverload public func \(name)() -> Int { 1 }",
+            flags: abiName
+        )
+        try compileModule(named: second, source: "public func \(name)() -> Int { 2 }", flags: abiName)
+
+        let linter = try makeLinter(
+            source: """
+                import \(first)
+                import \(second)
+
+                public func answers() -> (Int, Int) { (\(first).\(name)(), \(name)()) }
+
+                """,
+            compilerFlags: ["-I", URL.cwd.filepath]
+        )
+        let storage = RuleStorage()
+
+        #expect(linter.collect(into: storage).styleViolations(using: storage).isEmpty)
+    }
+
+    /// The index of SourceKit leaves out declarations of system modules whose names start with an underscore.
+    private static let hiddenInitializer = """
+        public extension Int {
+            init(_ _parts: (Int, Int)) { self = _parts.0 + _parts.1 }
+        }
+        """
+
     private func compileModule(named moduleName: String, source: String, flags: [String] = []) throws {
         let sourcePath = URL.cwd.appending(path: "\(moduleName).swift")
         try source.write(to: sourcePath, atomically: true, encoding: .utf8)

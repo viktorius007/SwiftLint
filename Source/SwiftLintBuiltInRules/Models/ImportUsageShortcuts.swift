@@ -73,6 +73,9 @@ struct ImportUsageShortcuts {
     /// The USRs of all declarations that SourceKit's index lists at a position, declared or referenced, in a
     /// stable order.
     private var usrsByOffset = [ByteCount: [String]]()
+    /// The positions whose cursor info can hold a symbol that the index does not list there, so that the listed
+    /// declarations do not determine it.
+    private var offsetsWithUnlistedSymbols = Set<ByteCount>()
     /// The usage at a position, by the declarations at that position, where it only holds within this file.
     private var usagesInThisFile = [[String]: SymbolUsage]()
 
@@ -91,7 +94,12 @@ struct ImportUsageShortcuts {
         offsetsInOwnModule = collector.declarationNameOffsets
             .union(file.localVariableReferenceOffsets(compilerArguments: compilerArguments))
             .subtracting(collector.offsetsReferringToShadowedDeclarations)
-        usrsByOffset = file.indexedUSRsByOffset(compilerArguments: compilerArguments)
+        let index = file.indexedDeclarations(compilerArguments: compilerArguments)
+        usrsByOffset = index.usrsByOffset
+        // The index leaves out hidden declarations of system modules. For a call that means: if the index lists no
+        // function at the callee, the called function is not among the listed declarations.
+        offsetsWithUnlistedSymbols = collector.calleeOffsets.subtracting(index.offsetsOfFunctions)
+            .union(collector.offsetsReferringToShadowedDeclarations)
     }
 
     /// Returns the modules that the token at a position adds to the modules used by the file, if that is known
@@ -122,41 +130,32 @@ struct ImportUsageShortcuts {
             }
             return
         }
-        guard let usrs = usrsByOffset[offset] else {
+        guard let usrs = usrsByOffset[offset], !offsetsWithUnlistedSymbols.contains(offset) else {
             return
         }
         let swiftUSRs = usrs.filter { $0.hasPrefix("s:") }
         // A module built with `-module-abi-name` gives its declarations USRs that do not name it, and that a
         // declaration of another module can have as well. Such a result is not reused at all.
-        guard swiftUSRs.allSatisfy({ usr in usage.modules.contains { Self.usr(usr, names: $0) } }) else {
+        guard swiftUSRs.allSatisfy({ usr in usage.modules.contains { MangledName.usr(usr, names: $0) } }) else {
             return
         }
         // A C declaration can be declared in several modules, and which of them a file sees depends on its
         // imports. So a result for one is reused within the file only.
-        if swiftUSRs.count == usrs.count {
-            module?[usrs] = usage
-        } else {
+        guard swiftUSRs.count == usrs.count else {
             usagesInThisFile[usrs] = usage
+            return
         }
-    }
-
-    /// Whether a Swift USR starts with the name of a module, the way the USR of a declaration of that module does.
-    private static func usr(_ usr: String, names module: String) -> Bool {
-        switch module {
-        case "Swift":
-            // The standard library is abbreviated.
-            return usr.hasPrefix("s:s") || usr.hasPrefix("s:S")
-        case "_Concurrency":
-            return usr.hasPrefix("s:Sc")
-        default:
-            let mangledModule = "\(module.utf8.count)\(module)"
-            // The second form is a member of an extension that the module declares for a type of another module.
-            return usr.hasPrefix("s:" + mangledModule) || usr.contains(mangledModule + "E")
+        // A module that no listed declaration accounts for comes from a symbol the index does not list.
+        if usage.modules.allSatisfy({ name in usrs.contains { MangledName.usr($0, names: name) } }) {
+            module?[usrs] = usage
         }
     }
 
     private func usage(at offset: ByteCount) -> SymbolUsage? {
-        usrsByOffset[offset].flatMap { usagesInThisFile[$0] ?? module?[$0] }
+        if offsetsWithUnlistedSymbols.contains(offset) {
+            return nil
+        }
+        return usrsByOffset[offset].flatMap { usagesInThisFile[$0] ?? module?[$0] }
     }
 }
 
@@ -184,18 +183,22 @@ private extension SwiftLintFile {
     }
 
     /// Returns the USRs that SourceKit's index lists at the position of a token, for every position where the
-    /// text of the file matches the name of one of the listed declarations.
+    /// text of the file matches the name of one of the listed declarations, and the positions where it lists a
+    /// function.
     ///
     /// The index gives lines and columns. The name check guards against a position computed from them that is not
     /// the one SourceKit meant.
-    func indexedUSRsByOffset(compilerArguments: [String]) -> [ByteCount: [String]] {
+    func indexedDeclarations(
+        compilerArguments: [String]
+    ) -> (usrsByOffset: [ByteCount: [String]], offsetsOfFunctions: Set<ByteCount>) {
         guard let index = index(compilerArguments: compilerArguments) else {
-            return [:]
+            return ([:], [])
         }
         let bytes = Array(contents.utf8)
         let converter = locationConverter
         var usrsByOffset = [ByteCount: Set<String>]()
         var offsetsWithMatchingName = Set<ByteCount>()
+        var offsetsOfFunctions = Set<ByteCount>()
         _ = index.traverseEntitiesDepthFirst { _, entity -> Void? in
             guard let usr = entity.value["key.usr"] as? String,
                   let line = entity.line,
@@ -209,9 +212,15 @@ private extension SwiftLintFile {
                bytes.dropFirst(offset).starts(with: name) {
                 offsetsWithMatchingName.insert(ByteCount(offset))
             }
+            if entity.kind?.contains(".function.") == true {
+                offsetsOfFunctions.insert(ByteCount(offset))
+            }
             return nil
         }
-        return usrsByOffset.filter { offsetsWithMatchingName.contains($0.key) }.mapValues { $0.sorted() }
+        return (
+            usrsByOffset.filter { offsetsWithMatchingName.contains($0.key) }.mapValues { $0.sorted() },
+            offsetsOfFunctions
+        )
     }
 }
 
@@ -219,9 +228,24 @@ private extension SwiftLintFile {
 private final class TokenCollector: SyntaxVisitor {
     private(set) var declarationNameOffsets = Set<ByteCount>()
     private(set) var calleeOffsetsByLabelOffset = [ByteCount: ByteCount]()
+    /// The positions of the names in the called expression of every call.
+    private(set) var calleeOffsets = Set<ByteCount>()
     /// The positions of names that declare a variable and at the same time refer to another one of the same name,
     /// which can come from any module: the shorthand `if let value` and the items of a closure's capture list.
     private(set) var offsetsReferringToShadowedDeclarations = Set<ByteCount>()
+
+    override func visitPost(_ node: FunctionCallExprSyntax) {
+        if let callee = offset(ofIdentifier: node.calledExpression.calleeName) {
+            calleeOffsets.insert(callee)
+        } else {
+            // A callee like `[Element]` or `(Element)`. Any of its names can be the called type.
+            for token in node.calledExpression.tokens(viewMode: .sourceAccurate) {
+                if let callee = offset(ofIdentifier: token) {
+                    calleeOffsets.insert(callee)
+                }
+            }
+        }
+    }
 
     override func visitPost(_ node: LabeledExprSyntax) {
         guard let label = offset(ofIdentifier: node.label),
