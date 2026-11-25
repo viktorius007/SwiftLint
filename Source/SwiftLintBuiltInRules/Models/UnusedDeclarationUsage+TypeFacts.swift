@@ -42,13 +42,14 @@ extension UnusedDeclarationUsage {
                 noteSwiftTesting(attribute: entity, in: parent)
                 return nil
             }
+            let owner = declaredOrExtendedType(of: parent)
             if let type = declaredOrExtendedType(of: entity) {
                 noteType(type, declaredOrExtendedBy: entity)
             }
             if entity.declaresType, let usr = entity.usr {
                 facts.declaredTypes.insert(usr)
+                facts.typesAround[usr] = owner
             }
-            let owner = declaredOrExtendedType(of: parent)
             if let owner, parent.declarationKind != .protocol {
                 noteGeneratedCode(of: owner, replacedBy: entity)
             }
@@ -145,7 +146,7 @@ extension UnusedDeclarationUsage {
                 facts.runBySwiftTesting.insert(usr)
             }
             if marksTest, let owner = declaredOrExtendedType(of: parent) {
-                facts.runBySwiftTesting.insert(owner)
+                facts.typesHoldingTests.insert(owner)
             }
         }
 

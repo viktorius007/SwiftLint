@@ -57,20 +57,73 @@ struct UnusedDeclarationSwiftTestingTests {
         ])
     }
 
-    // The code that the macros expand to names the suite or the type that holds the test, and no type around it.
+    // The code that `@Test` expands to names the type that holds the test by the types around it:
+    // `Outer.Inner.self`. The code that `@Suite` expands to is inside the suite and names no type.
     @Test(.temporaryDirectory)
-    func typeAroundTheTypeThatHoldsATestIsNotUsedByIt() throws {
+    func typesAroundTheTypeThatHoldsATestAreUsedByIt() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
             """
             import Testing
 
-            enum ↓Outer {
+            enum Outer {
                 struct Inner {
                     @Test func runs() {}
                 }
+                struct ↓Sibling {}
             }
+            enum First {
+                enum Second {
+                    struct Third {
+                        @Test static func runs() {}
+                    }
+                }
+            }
+            enum AroundSuite {
+                @Suite struct Held {
+                    @Test func runs() {}
+                }
+            }
+            enum Extended {}
+            extension Extended {
+                struct Inside {
+                    @Test func runs() {}
+                }
+            }
+            enum Same {
+                struct Piece {}
+            }
+            extension Same.Piece {
+                @Test func runs() {}
+            }
+            enum Split {
+                struct Part {}
+            }
+            """,
+            """
+            import Testing
+
+            extension Split.Part {
+                @Test func runs() {}
+            }
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func typesAroundASuiteWithoutATestAreNotUsedByIt() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
             enum ↓Namespace {
                 @Suite struct Nested {}
+            }
+            enum ↓First {
+                enum ↓Second {
+                    @Suite struct Leaf {
+                        func ↓helper() {}
+                    }
+                }
             }
             """,
         ])
