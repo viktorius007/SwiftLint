@@ -1,3 +1,5 @@
+import Foundation
+import SwiftLintCore
 import TestHelpers
 import Testing
 
@@ -108,6 +110,7 @@ struct UnusedDeclarationSwiftTestingTests {
 
             extension Tag {
                 @Tag static var quick: Self
+                @Tag static var ↓slow: Self
             }
 
             @Test(.tags(.quick)) func runs() throws {
@@ -182,4 +185,72 @@ struct UnusedDeclarationSwiftTestingTests {
             """,
         ])
     }
+
+    #if !os(Windows)
+    // The Swift Testing of a toolchain for macOS names its symbols `Testing_toolchain`, and so do their USRs.
+    @Test(.temporaryDirectory)
+    func swiftTestingIsKnownByTheNameOfItsModuleWhereItsSymbolsHaveAnotherName() throws {
+        try compileModule(named: "Testing", source: moduleWithMacros, flags: ["-module-abi-name", "Testing_toolchain"])
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                import Testing
+
+                @Test func runs() {}
+                func ↓leftover() {}
+
+                @Suite struct Checks {
+                    @Test func runs() {}
+                    func ↓leftover() {}
+                }
+
+                struct Holder {
+                    @Test func runs() {}
+                }
+
+                extension SourceLocation {
+                    static func __here() {}
+                    static func ↓leftover() {}
+                }
+                """,
+            ],
+            compilerFlags: ["-I", URL.cwd.filepath]
+        )
+    }
+
+    // With `Testing` as the name of its symbols, the USRs of the other module start like the ones of Swift
+    // Testing.
+    @Test(.temporaryDirectory, arguments: [[], ["-module-abi-name", "Testing"]])
+    func macroAndTypeOfAnotherModuleWithTheNamesOfSwiftTestingMarkNothing(flags: [String]) throws {
+        try compileModule(named: "Vendor", source: moduleWithMacros, flags: flags)
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                import Vendor
+
+                @Test func ↓runs() {}
+
+                @Suite struct ↓Checks {
+                    @Test func ↓runs() {}
+                }
+
+                extension SourceLocation {
+                    static func ↓__here() {}
+                }
+                """,
+            ],
+            compilerFlags: ["-I", URL.cwd.filepath]
+        )
+    }
+    #endif
 }
+
+#if !os(Windows)
+/// A module that declares what the tests use of Swift Testing. No plugin implements its macros, so the compiler
+/// expands none, as for Swift Testing in an analyzer rule.
+private let moduleWithMacros = """
+    @attached(peer) public macro Test() = #externalMacro(module: "NoPlugin", type: "NoMacro")
+    @attached(peer) public macro Suite() = #externalMacro(module: "NoPlugin", type: "NoMacro")
+    public struct SourceLocation {}
+    """
+#endif

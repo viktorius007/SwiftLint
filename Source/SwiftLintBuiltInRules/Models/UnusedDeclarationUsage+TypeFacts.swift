@@ -12,15 +12,21 @@ extension UnusedDeclarationUsage {
         private let overridden: (SourceKittenDictionary) -> [String]
         /// Tells whether the source declares a property with `let` and an initial value.
         private let isInitializedConstant: (SourceKittenDictionary) -> Bool
+        /// Asks SourceKit for the name of the module that declares what is referred to at the entity's position.
+        private let moduleName: (SourceKittenDictionary) -> String?
+        /// For each USR that SourceKit was asked about: whether Swift Testing declares it.
+        private var declaredBySwiftTesting = [String: Bool]()
 
         /// - parameter conformancesMissingFromIndex: For each type, the inherited types of its extensions that
         ///                                           the file has and its index lacks.
         init(conformancesMissingFromIndex: [String: Set<String>],
              overridden: @escaping (SourceKittenDictionary) -> [String],
-             isInitializedConstant: @escaping (SourceKittenDictionary) -> Bool) {
+             isInitializedConstant: @escaping (SourceKittenDictionary) -> Bool,
+             moduleName: @escaping (SourceKittenDictionary) -> String?) {
             facts.conformancesMissingFromIndex = conformancesMissingFromIndex
             self.overridden = overridden
             self.isInitializedConstant = isInitializedConstant
+            self.moduleName = moduleName
         }
 
         /// Notes what the entity tells about types.
@@ -42,8 +48,8 @@ extension UnusedDeclarationUsage {
             if let owner, parent.declarationKind != .protocol {
                 noteGeneratedCode(of: owner, replacedBy: entity)
             }
-            if let owner, owner.hasPrefix(UnusedDeclarationUsage.testingTypePrefix),
-               entity.name?.hasPrefix("__") == true, let usr = entity.usr {
+            if let owner, entity.name?.hasPrefix("__") == true, let usr = entity.usr,
+               isDeclaredBySwiftTesting(owner, referredToAtPositionOf: parent) {
                 facts.runBySwiftTesting.insert(usr)
             }
             guard let name = entity.memberName else {
@@ -123,10 +129,12 @@ extension UnusedDeclarationUsage {
 
         /// Notes what Swift Testing runs, if the entity is the reference of an attribute to `@Test` or `@Suite`.
         private mutating func noteSwiftTesting(attribute: SourceKittenDictionary, in parent: SourceKittenDictionary) {
+            // The name of a macro ends with its parameters: `Test(_:)`.
             guard attribute.kind == "source.lang.swift.ref.macro", let macro = attribute.usr,
-                  case let marksTest = macro.hasPrefix(UnusedDeclarationUsage.testMacroPrefix),
-                  marksTest || macro.hasPrefix(UnusedDeclarationUsage.suiteMacroPrefix),
-                  let marked = parent.declaration(following: attribute) else {
+                  let name = attribute.name?.prefix(while: { $0 != "(" }),
+                  case let marksTest = name == "Test", marksTest || name == "Suite",
+                  let marked = parent.declaration(following: attribute),
+                  isDeclaredBySwiftTesting(macro, referredToAtPositionOf: attribute) else {
                 return
             }
             if let usr = marked.usr {
@@ -135,6 +143,22 @@ extension UnusedDeclarationUsage {
             if marksTest, let owner = declaredOrExtendedType(of: parent) {
                 facts.runBySwiftTesting.insert(owner)
             }
+        }
+
+        /// Whether Swift Testing declares what has the given USR. The USR does not tell: it names the module as
+        /// the symbols of the module do, and a module can be compiled with another name for its symbols, as the
+        /// Swift Testing of a toolchain for macOS is. SourceKit tells the module's own name.
+        ///
+        /// - parameter usr:    USR of a macro or a type.
+        /// - parameter entity: An entity at the position of a reference to it, or of its declaration.
+        private mutating func isDeclaredBySwiftTesting(_ usr: String,
+                                                       referredToAtPositionOf entity: SourceKittenDictionary) -> Bool {
+            if let known = declaredBySwiftTesting[usr] {
+                return known
+            }
+            let isDeclared = moduleName(entity) == UnusedDeclarationUsage.swiftTesting
+            declaredBySwiftTesting[usr] = isDeclared
+            return isDeclared
         }
 
         /// USR of the type that the entity declares or extends.

@@ -130,7 +130,8 @@ private extension SwiftLintFile {
         var collector = UnusedDeclarationUsage.TypeFactsCollector(
             conformancesMissingFromIndex: conformancesMissingFromIndex(index),
             overridden: { [self] in overriddenUSRs(of: $0, compilerArguments: compilerArguments) },
-            isInitializedConstant: initializedConstantFinder()
+            isInitializedConstant: initializedConstantFinder(),
+            moduleName: { [self] in cursorInfo(atPositionOf: $0, compilerArguments: compilerArguments)?.moduleName }
         )
         let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
             let member = collector.visit(indexEntity, in: parent)
@@ -232,13 +233,19 @@ private extension SwiftLintFile {
 
     /// USRs of what SourceKit says the declaration overrides, or satisfies as a requirement of a protocol.
     private func overriddenUSRs(of indexEntity: SourceKittenDictionary, compilerArguments: [String]) -> [String] {
+        let overrides = cursorInfo(atPositionOf: indexEntity, compilerArguments: compilerArguments)?
+            .value["key.overrides"] as? [[String: any SourceKitRepresentable]]
+        return overrides?.compactMap { $0["key.usr"] as? String } ?? []
+    }
+
+    /// What SourceKit tells about the declaration at the entity's position, or about the one referred to there.
+    private func cursorInfo(atPositionOf indexEntity: SourceKittenDictionary, compilerArguments: [String])
+        -> SourceKittenDictionary? {
         guard let line = indexEntity.line, let column = indexEntity.column,
-              let nameOffset = stringView.byteOffset(forLine: line, bytePosition: column),
-              let overrides = cursorInfo(at: nameOffset, compilerArguments: compilerArguments)?
-                .value["key.overrides"] as? [[String: any SourceKitRepresentable]] else {
-            return []
+              let offset = stringView.byteOffset(forLine: line, bytePosition: column) else {
+            return nil
         }
-        return overrides.compactMap { $0["key.usr"] as? String }
+        return cursorInfo(at: offset, compilerArguments: compilerArguments)
     }
 
     func cursorInfo(at byteOffset: ByteCount, compilerArguments: [String]) -> SourceKittenDictionary? {

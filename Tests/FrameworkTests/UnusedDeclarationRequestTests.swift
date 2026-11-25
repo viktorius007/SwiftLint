@@ -36,6 +36,32 @@ struct UnusedDeclarationRequestTests {
         #expect(Set(offsets).count == offsets.count)
     }
 
+    // SourceKit tells which module declares a macro. All attributes of a file that refer to one macro share
+    // the answer.
+    @Test(.temporaryDirectory)
+    func macroOfSwiftTestingIsAskedAboutOnceInAFile() throws {
+        let source = """
+            import Testing
+
+            @Test func first() {}
+            @Test func second() {}
+            @Test func third() {}
+            """
+        let requests = RequestLog()
+        try SourceKitRequestObserver.$current.withValue({ requests.append($0.description) }, operation: {
+            try expectOnlyMarkedDeclarationsReported(in: [source])
+        })
+
+        // The index has an attribute at the position of its name.
+        let attributes = source.ranges(of: "@Test").map {
+            source.utf8.distance(from: source.startIndex, to: $0.lowerBound) + 1
+        }
+        let asked = requests.all.filter { $0.contains("source.request.cursorinfo") }
+            .compactMap { $0.firstMatch(of: #/key\.offset: (\d+)/#).flatMap { Int($0.output.1) } }
+        #expect(attributes.count == 3)
+        #expect(asked.filter(attributes.contains).count == 1)
+    }
+
     #if !os(Windows)
     @Test(.temporaryDirectory)
     func sourceKitIsAskedAboutProtocolsAndTypeAliasesThatNoFileDeclares() throws {

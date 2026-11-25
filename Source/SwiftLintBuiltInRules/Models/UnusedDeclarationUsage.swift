@@ -27,9 +27,10 @@
 //   refers to the type that holds a test. The index has it only if the compiler expanded the macros, and
 //   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run
 //   if it carries one of the two attributes. The index tells which macro an attribute refers to, and it lists
-//   that reference right before the declaration that carries the attribute. The code that the macros of Swift
-//   Testing expand to calls members of its types whose names start with `__`. An extension of such a type can
-//   declare a member that these calls choose, so each of its members with such a name counts as used.
+//   that reference right before the declaration that carries the attribute. SourceKit tells which module
+//   declares the macro (see `isDeclaredBySwiftTesting`). The code that the macros of Swift Testing expand to
+//   calls members of its types whose names start with `__`. An extension of such a type can declare a member
+//   that these calls choose, so each of its members with such a name counts as used.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves
 // out are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it
@@ -98,12 +99,8 @@ struct UnusedDeclarationUsage {
     static let decodable = "s:Se"
     static let encodable = "s:SE"
     static let codable = "s:s7Codablea"
-    /// What starts the USR of every macro named `Test` in Swift Testing.
-    static let testMacroPrefix = "s:7Testing4Test"
-    /// What starts the USR of every macro named `Suite` in Swift Testing.
-    static let suiteMacroPrefix = "s:7Testing5Suite"
-    /// What starts the USR of every type of Swift Testing.
-    static let testingTypePrefix = "s:7Testing"
+    /// Name of the module of Swift Testing.
+    static let swiftTesting = "Testing"
     /// Declarations of the standard library whose requirements and inherited types are known here: the ones of
     /// coding, and the protocols that cannot have requirements.
     static let knownTypes: Set = [
