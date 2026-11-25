@@ -143,6 +143,103 @@ struct UnusedDeclarationUsageTests {
     }
 
     @Test(.temporaryDirectory)
+    func storedPropertiesAreUsedByTheCodingThatTheCompilerGenerates() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            struct ↓Reading: Decodable {
+                let level: Int
+                var unit: String
+                var ↓doubled: Int { 2 }
+                static let ↓limit = 10
+            }
+
+            struct ↓Receipt: Encodable {
+                var total: Int
+                lazy var ↓doubled = 2
+            }
+
+            struct ↓Packet: Payload {
+                var size: Int
+            }
+
+            struct ↓Label {
+                var text: String
+            }
+
+            extension Label: Codable {}
+
+            struct ↓Plain {
+                var ↓size: Int
+            }
+            """,
+            """
+            protocol Payload: Codable {}
+
+            struct ↓Parsed: Decodable {
+                let digits: Int
+
+                init(from _: String) {
+                    digits = 1
+                }
+            }
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func storedPropertiesAreNotUsedByCodingThatIsDeclared() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            struct ↓Manual: Decodable {
+                let first: Int
+                let ↓spare = 0
+            }
+
+            struct ↓Written: Codable {
+                var ↓count = 0
+
+                init(from _: any Decoder) throws {}
+
+                func encode(to _: any Encoder) throws {}
+            }
+
+            struct ↓Half: Codable {
+                var count = 0
+
+                func encode(to _: any Encoder) throws {}
+            }
+
+            class Base: Codable {
+                var id = 0
+            }
+
+            final class ↓Derived: Base {
+                var ↓extra = 0
+            }
+            """,
+            """
+            extension Manual {
+                init(from _: any Decoder) throws {
+                    first = 1
+                }
+            }
+
+            protocol Fixed: Decodable {}
+
+            extension Fixed {
+                init(from _: any Decoder) throws {
+                    fatalError("not decoded")
+                }
+            }
+
+            struct ↓Constant: Fixed {
+                var ↓value = 0
+            }
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
     func typeNamedLikeAValueOfAPropertyWrapperIsNoSuchValue() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
             """

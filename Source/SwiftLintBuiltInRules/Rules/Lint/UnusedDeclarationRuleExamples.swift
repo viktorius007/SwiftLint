@@ -148,7 +148,7 @@ struct UnusedDeclarationRuleExamples {
         """
         struct Item {}
         struct ↓ResponseModel: Codable {
-            let ↓items: [Item]
+            let items: [Item]
 
             enum ↓CodingKeys: String {
                 case items = "ResponseItems"
