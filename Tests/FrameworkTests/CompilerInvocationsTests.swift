@@ -29,6 +29,22 @@ struct CompilerInvocationsTests {
     }
 
     @Test
+    func quotedPathOfABuildLogKeepsItsBackslash() {
+        let log = ##"swiftc -module-name Sample "Sources/With\#Hash.swift""##
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.contains(##"Sources/With\#Hash.swift"##) == true)
+    }
+
+    @Test
+    func argumentThatIsNoPartOfABuildLogKeepsItsBackslash() {
+        let path = ##"Sources/With\#Hash.swift"##
+
+        #expect(["-module-name", "Sample", path].filteringCompilerArguments.contains(path))
+    }
+
+    @Test
     func buildLogInvocationIsNotFoundForAnotherFile() {
         let invocations = CompilerInvocations.buildLog(compilerInvocations: [Self.invocation])
 
