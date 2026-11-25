@@ -53,7 +53,7 @@ struct CompilerInvocationsTests {
     }
 
     // What the compiler reads from each line was established with `swiftc -typecheck @file` on Swift 6.4.2.
-    @Test(.temporaryDirectory, arguments: [
+    private static let responseFileContents: [(String, [String])] = [
         (##"a\\\#b.swift"##, [##"a\#b.swift"##]),
         (#"a\ b.swift"#, ["a b.swift"]),
         (#""a b.swift" 'c d.swift'"#, ["a b.swift", "c d.swift"]),
@@ -63,7 +63,19 @@ struct CompilerInvocationsTests {
         ("a.swift\tb.swift  c.swift", ["a.swift", "b.swift", "c.swift"]),
         ("// a.swift\nb.swift", ["b.swift"]),
         (#"a\nb.swift"#, ["anb.swift"]),
-    ])
+        (#"a\\=b.swift"#, [#"a\=b.swift"#]),
+        (#"a\\\ b.swift"#, [#"a\ b.swift"#]),
+        ("a.swift\r\n// b.swift\r\n\"c d.swift\"", ["a.swift", "c d.swift"]),
+        ("a.swift\r//b.swift", ["a.swift", "//b.swift"]),
+        ("\"a\rb.swift\"", ["a\rb.swift"]),
+        ("\"a\u{B}b.swift\"", ["a\u{B}b.swift"]),
+        ("\"a\u{C}b.swift\"", ["a\u{C}b.swift"]),
+        ("\"a\u{85}b.swift\"", ["a\u{85}b.swift"]),
+        ("\"a\u{2028}b.swift\"", ["a\u{2028}b.swift"]),
+        ("\"a\u{2029}b.swift\"", ["a\u{2029}b.swift"]),
+    ]
+
+    @Test(.temporaryDirectory, arguments: responseFileContents)
     func responseFileIsReadAsTheCompilerReadsIt(contents: String, arguments: [String]) throws {
         let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
         try contents.write(to: responseFile, atomically: true, encoding: .utf8)
@@ -84,6 +96,35 @@ struct CompilerInvocationsTests {
         let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
 
         #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == ["A.swift", "B.swift"])
+    }
+
+    // The compiler compares the paths without `.` and `..`.
+    @Test(.temporaryDirectory)
+    func responseFileThatNamesItselfByAnotherSpellingIsExpandedOnce() throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try "A.swift\n@\(URL.cwd.filepath)/./arguments.rsp\nB.swift\n"
+            .write(to: responseFile, atomically: true, encoding: .utf8)
+        let log = "swiftc -module-name Sample @\(responseFile.filepath)"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == ["A.swift", "B.swift"])
+    }
+
+    // The compiler keeps a byte order mark as part of the first argument, and it replaces bytes that are not
+    // UTF-8.
+    @Test(.temporaryDirectory, arguments: [
+        (Data([0xEF, 0xBB, 0xBF, 0x61, 0x2E, 0x73, 0x77, 0x69, 0x66, 0x74]), "\u{FEFF}a.swift"),
+        (Data([0x61, 0xFF, 0x2E, 0x73, 0x77, 0x69, 0x66, 0x74]), "a\u{FFFD}.swift"),
+    ])
+    func responseFileIsReadByteByByte(bytes: Data, argument: String) throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try bytes.write(to: responseFile)
+        let log = "swiftc -module-name Sample @\(responseFile.filepath)"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") } == [argument])
     }
 
     @Test

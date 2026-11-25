@@ -5,9 +5,11 @@ struct CompilerArgumentsExtractor {
         var compilerInvocations = [[String]]()
         compilerLogs.enumerateLines { line, _ in
             if let swiftcIndex = line.range(of: "swiftc ")?.upperBound, line.contains(" -module-name ") {
+                // A response file is not written by the build tool, so it has none of the log's escapes.
                 let invocation = parseCLIArguments(String(line[swiftcIndex...]))
+                    .removingEscapesOfBuildLogs
                     .expandingResponseFiles
-                    .filteringCompilerArguments
+                    .removingArgumentsThatSourceKitRejects
                 compilerInvocations.append(invocation)
             }
         }
@@ -98,34 +100,45 @@ extension Array where Element == String {
         expandingResponseFiles(within: [])
     }
 
-    /// - parameter openFiles: The response files that are being expanded. Like the compiler, this leaves out one
-    ///                        of them that it meets again.
+    /// - parameter openFiles: The response files that are being expanded, each by its absolute path without `.`
+    ///                        and `..`. Like the compiler, this leaves out one of them that it meets again.
     private func expandingResponseFiles(within openFiles: Set<String>) -> [String] {
         flatMap { arg -> [String] in
             guard arg.starts(with: "@") else {
                 return [arg]
             }
-            let responseFile = String(arg.dropFirst())
-            guard !openFiles.contains(responseFile) else {
+            let responseFile = URL(filePath: String(arg.dropFirst()), directoryHint: .notDirectory)
+            let path = responseFile.standardizedFileURL.path
+            guard !openFiles.contains(path) else {
                 return []
             }
-            return (try? String(contentsOf: URL(filePath: responseFile, directoryHint: .notDirectory))).map {
-                $0.split(whereSeparator: \.isNewline).flatMap(parseResponseFileLine)
-                    .expandingResponseFiles(within: openFiles.union([responseFile]))
+            return (try? Data(contentsOf: responseFile)).map {
+                // Like the compiler, this keeps a byte order mark and replaces bytes that are not UTF-8, and it
+                // ends a line at a line feed only.
+                // swiftlint:disable:next optional_data_string_conversion
+                String(decoding: $0, as: UTF8.self)
+                    .split { $0 == "\n" || $0 == "\r\n" }
+                    .flatMap(parseResponseFileLine)
+                    .expandingResponseFiles(within: openFiles.union([path]))
             } ?? [arg]
         }
     }
 
     /// Returns filtered compiler arguments from `xcodebuild` to something that SourceKit/Clang will accept.
     var filteringCompilerArguments: [String] {
+        removingEscapesOfBuildLogs.removingArgumentsThatSourceKitRejects
+    }
+
+    // https://github.com/realm/SwiftLint/issues/3365
+    fileprivate var removingEscapesOfBuildLogs: [String] {
+        map { $0.replacingOccurrences(of: "\\=", with: "=").replacingOccurrences(of: "\\ ", with: " ") }
+    }
+
+    fileprivate var removingArgumentsThatSourceKitRejects: [String] {
         var args = self
         if args.first == "swiftc" {
             args.removeFirst()
         }
-
-        // https://github.com/realm/SwiftLint/issues/3365
-        args = args.map { $0.replacingOccurrences(of: "\\=", with: "=") }
-        args = args.map { $0.replacingOccurrences(of: "\\ ", with: " ") }
         args.append(contentsOf: ["-D", "DEBUG"])
         var shouldContinueToFilterArguments = true
         while shouldContinueToFilterArguments {
