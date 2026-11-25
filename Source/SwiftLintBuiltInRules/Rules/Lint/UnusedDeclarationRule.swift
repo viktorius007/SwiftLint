@@ -124,7 +124,9 @@ private extension SwiftLintFile {
                       compilerArguments: [String],
                       configuration: UnusedDeclarationConfiguration)
         -> (declared: Set<UnusedDeclarationRule.DeclaredUSR>, typeFacts: UnusedDeclarationUsage.TypeFacts) {
-        var collector = UnusedDeclarationUsage.TypeFactsCollector()
+        var collector = UnusedDeclarationUsage.TypeFactsCollector { [self] declaration in
+            overriddenUSRs(of: declaration, compilerArguments: compilerArguments)
+        }
         let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
             let member = collector.visit(indexEntity, in: parent)
             var declared = self.declaredUSR(indexEntity: indexEntity,
@@ -224,6 +226,17 @@ private extension SwiftLintFile {
         }
 
         return .init(usr: usr, nameOffset: nameOffset)
+    }
+
+    /// USRs of what SourceKit says the declaration overrides, or satisfies as a requirement of a protocol.
+    private func overriddenUSRs(of indexEntity: SourceKittenDictionary, compilerArguments: [String]) -> [String] {
+        guard let line = indexEntity.line, let column = indexEntity.column,
+              let nameOffset = stringView.byteOffset(forLine: line, bytePosition: column),
+              let overrides = cursorInfo(at: nameOffset, compilerArguments: compilerArguments)?
+                .value["key.overrides"] as? [[String: any SourceKitRepresentable]] else {
+            return []
+        }
+        return overrides.compactMap { $0["key.usr"] as? String }
     }
 
     func cursorInfo(at byteOffset: ByteCount, compilerArguments: [String]) -> SourceKittenDictionary? {

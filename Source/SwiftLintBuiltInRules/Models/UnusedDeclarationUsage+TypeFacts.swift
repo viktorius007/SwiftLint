@@ -8,6 +8,12 @@ extension UnusedDeclarationUsage {
         /// The type that the entity at a line and column declares or extends. Looking it up for an extension
         /// reads all its entities, so it is done once and not for every member.
         private var types = [Position: String?]()
+        /// Asks SourceKit for the USRs of what a declaration overrides or satisfies.
+        private let overridden: (SourceKittenDictionary) -> [String]
+
+        init(overridden: @escaping (SourceKittenDictionary) -> [String]) {
+            self.overridden = overridden
+        }
 
         /// Notes what the entity tells about types.
         ///
@@ -63,15 +69,16 @@ extension UnusedDeclarationUsage {
         }
 
         private mutating func noteCoding(of type: String, by member: SourceKittenDictionary) {
-            let related = member.relatedUSRs
-            if related.contains(UnusedDeclarationUsage.decodingRequirement)
-                || member.name == "init(from:)"
-                && member.usr?.hasSuffix(UnusedDeclarationUsage.decodingWitnessSuffix) == true {
+            let requirements = [UnusedDeclarationUsage.decodingRequirement, UnusedDeclarationUsage.encodingRequirement]
+            var satisfied = member.relatedUSRs.filter(requirements.contains)
+            // Where the index leaves the conformance out, it relates no declaration to a requirement.
+            if satisfied.isEmpty, member.name == "init(from:)" || member.name == "encode(to:)" {
+                satisfied = overridden(member)
+            }
+            if satisfied.contains(UnusedDeclarationUsage.decodingRequirement) {
                 facts.typesWithOwnDecoding.insert(type)
             }
-            if related.contains(UnusedDeclarationUsage.encodingRequirement)
-                || member.name == "encode(to:)"
-                && member.usr?.hasSuffix(UnusedDeclarationUsage.encodingWitnessSuffix) == true {
+            if satisfied.contains(UnusedDeclarationUsage.encodingRequirement) {
                 facts.typesWithOwnEncoding.insert(type)
             }
             // The compiler generates the getter of a stored property. Generated coding leaves out a lazy one.

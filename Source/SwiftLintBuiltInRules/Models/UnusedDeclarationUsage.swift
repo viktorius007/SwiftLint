@@ -7,7 +7,9 @@
 // * The stored properties of a type are written by the `init(from:)` and read by the `encode(to:)` that the
 //   compiler generates for `Decodable` and `Encodable`. The index does not list a generated one. It marks a
 //   declared one, and one that a subclass inherits, as satisfying the protocol's requirement. Where it leaves
-//   the conformance out (see below), a declared one is known by its name and the type of its parameter.
+//   the conformance out (see below), SourceKit tells whether a declared one satisfies the requirement, in the
+//   file that declares the conformance. In another file a declared one is not known, and the stored properties
+//   count as used.
 // * A conformance uses the members that satisfy the protocol's requirements. The index lists these witnesses
 //   under the conforming declaration (see `isWitnessDeclaredElsewhere`), with one exception: the compiler leaves
 //   an extension without members out of the index if none of its inherited types is a single protocol or class,
@@ -16,7 +18,8 @@
 //   in itself, in what it inherits from, or at file scope for an operator. The requirements of a protocol that
 //   no linted file declares are not known. Then everything the type inherits and every operator at file scope
 //   counts as a witness. The type's own members do not: SourceKit tells for each of them whether it satisfies
-//   a requirement.
+//   a requirement. It tells so in the file that declares the conformance only. In all other files, the type's
+//   members count as witnesses too.
 // * A test and a suite of Swift Testing are run by the code that `@Test` and `@Suite` expand to. That code also
 //   refers to the type that holds a test. The index has it only if the compiler expanded the macros, and
 //   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run
@@ -85,10 +88,6 @@ struct UnusedDeclarationUsage {
     static let codable = "s:s7Codablea"
     static let decodingRequirement = "s:Se4fromxs7Decoder_p_tKcfc"
     static let encodingRequirement = "s:SE6encode2toys7Encoder_p_tKF"
-    /// What ends the USR of every `init(from: any Decoder) throws`.
-    static let decodingWitnessSuffix = "s7Decoder_p_tKcfc"
-    /// What ends the USR of every `func encode(to: any Encoder) throws`.
-    static let encodingWitnessSuffix = "6encode2toys7Encoder_p_tKF"
     /// What starts the USR of every macro named `Test` in Swift Testing.
     static let testMacroPrefix = "s:7Testing4Test"
     /// What starts the USR of every macro named `Suite` in Swift Testing.
@@ -117,7 +116,7 @@ struct UnusedDeclarationUsage {
         inherited[Self.codable, default: []].formUnion([Self.decodable, Self.encodable])
         let inheritance = Inheritance(inherited)
 
-        referenced = collectedInfo.values.reduce(into: Self.propertiesUsedByGeneratedCoding(facts, inheritance)) {
+        var referenced = collectedInfo.values.reduce(into: Self.propertiesUsedByGeneratedCoding(facts, inheritance)) {
             $0.formUnion($1.referenced)
             $0.formUnion($1.typeFacts.runBySwiftTesting)
         }
@@ -158,6 +157,37 @@ struct UnusedDeclarationUsage {
         }
         self.witnessNames = witnessNames
         self.ownersOfUnknownWitnesses = ownersOfUnknownWitnesses
+        referenced.formUnion(Self.membersInOtherFilesThanTheirConformance(collectedInfo) {
+            !inheritance.withInherited($0).isSubset(of: typesWithKnownRequirements)
+        })
+        self.referenced = referenced
+    }
+
+    /// The members of a type in other files than the one that declares a conformance of the type which is
+    /// missing from the index, and whose requirements are not known.
+    private static func membersInOtherFilesThanTheirConformance(
+        _ collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs],
+        hasUnknownRequirements: (Set<String>) -> Bool
+    ) -> Set<String> {
+        var filesOfConformances = [String: Set<SwiftLintFile>]()
+        for (file, info) in collectedInfo {
+            for (type, protocols) in info.typeFacts.conformancesMissingFromIndex
+            where hasUnknownRequirements(protocols) {
+                filesOfConformances[type, default: []].insert(file)
+            }
+        }
+        guard filesOfConformances.isNotEmpty else {
+            return []
+        }
+        var members = Set<String>()
+        for (file, info) in collectedInfo {
+            for declaration in info.declared {
+                if let type = declaration.member?.type, let files = filesOfConformances[type], files != [file] {
+                    members.insert(declaration.usr)
+                }
+            }
+        }
+        return members
     }
 
     /// The stored properties of the types for which the compiler generates `init(from:)` or `encode(to:)`.

@@ -215,4 +215,131 @@ struct UnusedDeclarationImportedProtocolTests {
             """,
         ])
     }
+
+    @Test(.temporaryDirectory)
+    func codingDeclaredWithoutThrowsOrWithATypedErrorIsNoGeneratedCoding() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Foundation
+
+            protocol Marked {}
+            enum Failure: Error { case unexpected }
+
+            struct Envelope {
+                var ↓unused = 0
+                func encode(to _: any Encoder) {}
+            }
+            extension Envelope: Encodable & Marked {}
+
+            struct Letter {
+                var ↓unused = 0
+                init(from _: any Decoder) {}
+            }
+            extension Letter: Decodable & Marked {}
+
+            struct Parcel {
+                var ↓unused = 0
+                func encode(to _: any Encoder) throws(Failure) {}
+            }
+            extension Parcel: Encodable & Marked {}
+
+            let data = try JSONEncoder().encode(Envelope())
+            print(try JSONDecoder().decode(Letter.self, from: data), try JSONEncoder().encode(Parcel()))
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func codingOfAConstrainedExtensionDoesNotReplaceGeneratedCoding() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Foundation
+
+            protocol Marked {}
+
+            struct Box<Content>: Encodable {
+                var value = 7
+            }
+            extension Box where Content == Bool {
+                func ↓encode(to _: any Encoder) throws {}
+            }
+
+            struct Crate<Content> {
+                var value = 7
+            }
+            extension Crate: Encodable & Marked {}
+            extension Crate where Content == Bool {
+                func ↓encode(to _: any Encoder) throws {}
+            }
+
+            print(try JSONEncoder().encode(Box<Int>()), try JSONEncoder().encode(Crate<Int>()))
+            """,
+        ])
+    }
+
+    // SourceKit tells whether a member satisfies a requirement for the file that declares the conformance
+    // only. So in other files, every member of the type is kept.
+    @Test(.temporaryDirectory)
+    func memberInAnotherFileThanAConformanceToAProtocolOfAnotherModuleIsKept() throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                struct Size {}
+                extension Size {
+                    var description: String { "size" }
+                    var leftover: Int { 0 }
+                }
+
+                struct Other {
+                    var ↓leftover: Int { 0 }
+                }
+                """,
+                """
+                protocol Marked {}
+                extension Size: CustomStringConvertible & Marked {}
+                extension Size {
+                    var ↓leftoverBesideTheConformance: Int { 0 }
+                }
+
+                func describe(_ value: some CustomStringConvertible) -> String { value.description }
+
+                @main
+                struct Entry {
+                    static func main() { print(describe(Size()), Other()) }
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
+    @Test(.temporaryDirectory)
+    func memberInAnotherFileThanAConformanceToAProtocolOfALintedFileIsKnownByName() throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                struct Weight {}
+                extension Weight {
+                    var grams: Int { 0 }
+                    var ↓leftover: Int { 0 }
+                }
+                """,
+                """
+                protocol Marked {}
+                protocol Weighable {
+                    var grams: Int { get }
+                }
+                extension Weight: Weighable & Marked {}
+
+                func weigh(_ value: some Weighable) -> Int { value.grams }
+
+                @main
+                struct Entry {
+                    static func main() { print(weigh(Weight())) }
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
 }
