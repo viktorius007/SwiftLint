@@ -313,6 +313,32 @@ struct UnusedDeclarationImportedProtocolTests {
         )
     }
 
+    // The index lists the module that qualifies a type among the references of a type alias.
+    @Test(.temporaryDirectory)
+    func moduleThatQualifiesAProtocolOfALintedFileIsNoProtocolOfAnotherModule() throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                struct Model {
+                    func ↓discarded() {}
+                }
+                """,
+                """
+                protocol Marker {}
+                protocol Other {}
+                typealias Composite = UnusedDeclarationUsage.Marker & Other
+                extension Model: Composite {}
+
+                @main
+                struct Entry {
+                    static func main() { print(Model()) }
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
     @Test(.temporaryDirectory)
     func memberInAnotherFileThanAConformanceToAProtocolOfALintedFileIsKnownByName() throws {
         try expectOnlyMarkedDeclarationsReported(

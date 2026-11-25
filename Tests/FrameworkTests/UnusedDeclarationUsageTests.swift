@@ -269,6 +269,8 @@ struct UnusedDeclarationUsageTests {
 
             @objc(RenamedProvider) final class Provider: NSObject {}
 
+            func ↓mentions(text _: String = "@objc(name) @objc and <name>@objc</name>") {}
+
             _ = Backing()
             """,
         ])

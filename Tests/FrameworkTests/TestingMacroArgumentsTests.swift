@@ -35,6 +35,7 @@ struct TestingMacroArgumentsTests {
         "import Testing\n",
         "@testable import Testing\n",
         "import struct Testing.Tag\n",
+        "import `Testing`\n",
         "import Foundation\n#if canImport(Testing)\nimport Testing\n#endif\n",
         "#if os(Linux)\nimport Foundation\n#else\nimport Testing\n#endif\n",
         "#if DEBUG\n#if canImport(Testing)\nimport Testing\n#endif\n#endif\n",

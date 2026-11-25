@@ -5,11 +5,12 @@
 //   if the type finds several is not known here, so each of them counts as used.
 // * `wrappedValue` and `projectedValue` are read by the properties that a property wrapper is applied to.
 // * The stored properties of a type are written by the `init(from:)` and read by the `encode(to:)` that the
-//   compiler generates for `Decodable` and `Encodable`. The index does not list a generated one. It marks a
-//   declared one, and one that a subclass inherits, as satisfying the protocol's requirement. Where it leaves
-//   the conformance out (see below), SourceKit tells whether a declared one satisfies the requirement, in the
-//   file that declares the conformance. In another file a declared one is not known, and the stored properties
-//   count as used.
+//   compiler generates for `Decodable` and `Encodable`, also where a type gets one of the two through a
+//   protocol or a type alias of another module (see `noteInheritanceOfTypesDeclaredElsewhere`). The index does
+//   not list a generated one. It marks a declared one, and one that a subclass inherits, as satisfying the
+//   protocol's requirement. Where it leaves the conformance out (see below), SourceKit tells whether a declared
+//   one satisfies the requirement, in the file that declares the conformance. In another file a declared one is
+//   not known, and the stored properties count as used.
 // * A conformance uses the members that satisfy the protocol's requirements. The index lists these witnesses
 //   under the conforming declaration (see `isWitnessDeclaredElsewhere`), with one exception: the compiler leaves
 //   an extension without members out of the index if none of its inherited types is a single protocol or class,
@@ -24,7 +25,9 @@
 //   refers to the type that holds a test. The index has it only if the compiler expanded the macros, and
 //   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run
 //   if it carries one of the two attributes. The index tells which macro an attribute refers to, and it lists
-//   that reference right before the declaration that carries the attribute.
+//   that reference right before the declaration that carries the attribute. The code that the macros of Swift
+//   Testing expand to calls members of its types whose names start with `__`. An extension of such a type can
+//   declare a member that these calls choose, so each of its members with such a name counts as used.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves
 // out are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it
@@ -79,7 +82,8 @@ struct UnusedDeclarationUsage {
         var typesWithOwnEncoding = Set<String>()
         /// The types, protocols, type aliases and generic parameters that the file declares.
         var declaredTypes = Set<String>()
-        /// The tests and suites of Swift Testing, and the types that hold a test.
+        /// The tests and suites of Swift Testing, the types that hold a test, and what the expansions of its
+        /// macros can call.
         var runBySwiftTesting = Set<String>()
     }
 
@@ -92,6 +96,8 @@ struct UnusedDeclarationUsage {
     static let testMacroPrefix = "s:7Testing4Test"
     /// What starts the USR of every macro named `Suite` in Swift Testing.
     static let suiteMacroPrefix = "s:7Testing5Suite"
+    /// What starts the USR of every type of Swift Testing.
+    static let testingTypePrefix = "s:7Testing"
     /// Protocols of the standard library that cannot have requirements.
     private static let markerProtocols: Set = ["s:s8SendableP", "s:s16SendableMetatypeP", "s:s15BitwiseCopyableP"]
 

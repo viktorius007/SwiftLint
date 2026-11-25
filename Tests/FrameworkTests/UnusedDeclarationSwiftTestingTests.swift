@@ -121,6 +121,32 @@ struct UnusedDeclarationSwiftTestingTests {
         ])
     }
 
+    // `#expect` expands to a call of `SourceLocation.__here()`, and the compiler chooses the one without
+    // parameters that the extension declares.
+    @Test(.temporaryDirectory)
+    func memberOfATypeOfSwiftTestingThatAnExpansionCallsIsUsed() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            extension SourceLocation {
+                static func __here() -> Self {
+                    Self(fileID: "Sample/Test.swift", filePath: "/Test.swift", line: 1, column: 1)
+                }
+                static func ↓leftover() {}
+            }
+
+            struct ↓Unrelated {
+                static func ↓__here() {}
+            }
+
+            @Test func succeeds() {
+                #expect(Bool(true))
+            }
+            """,
+        ])
+    }
+
     @Test(.temporaryDirectory)
     func referenceToATypeOfSwiftTestingMarksNothing() throws {
         try expectOnlyMarkedDeclarationsReported(in: [

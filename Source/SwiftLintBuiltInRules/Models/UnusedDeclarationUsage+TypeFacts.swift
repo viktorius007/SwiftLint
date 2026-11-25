@@ -20,8 +20,9 @@ extension UnusedDeclarationUsage {
         /// - returns: The entity as a member of the type that its parent declares or extends, if it is one.
         mutating func visit(_ entity: SourceKittenDictionary, in parent: SourceKittenDictionary) -> Member? {
             guard entity.declarationKind != nil else {
-                if parent.declarationKind == .typealias, entity.isReference, let alias = parent.usr,
-                   let usr = entity.usr {
+                // A type alias can name the module of a type: `typealias A = Module.P`.
+                if parent.declarationKind == .typealias, entity.isReference, !entity.isModuleReference,
+                   let alias = parent.usr, let usr = entity.usr {
                     facts.inherited[alias, default: []].insert(usr)
                 }
                 noteSwiftTesting(attribute: entity, in: parent)
@@ -36,6 +37,10 @@ extension UnusedDeclarationUsage {
             let owner = declaredOrExtendedType(of: parent)
             if let owner, parent.declarationKind != .protocol {
                 noteCoding(of: owner, by: entity)
+            }
+            if let owner, owner.hasPrefix(UnusedDeclarationUsage.testingTypePrefix),
+               entity.name?.hasPrefix("__") == true, let usr = entity.usr {
+                facts.runBySwiftTesting.insert(usr)
             }
             guard let name = entity.memberName else {
                 return nil
@@ -140,7 +145,7 @@ extension SwiftLintFile {
         // Without the extension, the index has the references to its types at the top level. Apart from the
         // modules of its imports, few files have references there, and only those are parsed.
         let topLevelEntities = index.entities
-        guard topLevelEntities.contains(where: { $0.isReference && $0.kind != "source.lang.swift.ref.module" }) else {
+        guard topLevelEntities.contains(where: { $0.isReference && !$0.isModuleReference }) else {
             return [:]
         }
         let extensions = ExtensionCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.extensions)
@@ -222,6 +227,10 @@ private extension SourceKittenDictionary {
 
     var isReference: Bool {
         kind?.starts(with: "source.lang.swift.ref.") == true
+    }
+
+    var isModuleReference: Bool {
+        kind == "source.lang.swift.ref.module"
     }
 
     var isTypeAliasReference: Bool {

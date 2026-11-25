@@ -138,6 +138,9 @@ private extension SwiftLintFile {
         }
         var typeFacts = collector.facts
         typeFacts.conformancesMissingFromIndex = conformancesMissingFromIndex(index)
+        typeFacts.noteInheritanceOfTypesDeclaredElsewhere {
+            typesInherited(byDeclarationWithUSR: $0, compilerArguments: compilerArguments)
+        }
         return (Set(declared), typeFacts)
     }
 
@@ -205,8 +208,8 @@ private extension SwiftLintFile {
 
         let cursorInfo = cursorInfo(at: nameOffset, compilerArguments: compilerArguments)
 
-        if let declaration = cursorInfo?.annotatedDeclaration,
-           UnusedDeclarationUsage.isMarkedForObjectiveC(annotatedDeclaration: declaration) {
+        if let declaration = cursorInfo?.value["key.fully_annotated_decl"] as? String,
+           UnusedDeclarationUsage.isMarkedForObjectiveC(fullyAnnotatedDeclaration: declaration) {
             return nil
         }
 
@@ -288,10 +291,6 @@ private extension SwiftLintFile {
 private extension SourceKittenDictionary {
     var usr: String? {
         value["key.usr"] as? String
-    }
-
-    var annotatedDeclaration: String? {
-        value["key.annotated_decl"] as? String
     }
 
     var isImplicit: Bool {

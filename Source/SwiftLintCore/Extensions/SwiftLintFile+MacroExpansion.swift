@@ -13,9 +13,11 @@ public extension SwiftLintFile {
     ///
     /// Expanding the macros of Swift Testing and type-checking what they expand to takes several times as long
     /// as type-checking the test file as written, and the compiler has no option that turns a macro off. No macro
-    /// of Swift Testing declares a name, so the written code cannot refer to anything in an expansion. With the
-    /// returned arguments, the compiler reports an error at every use of such a macro and goes on, and SourceKit
-    /// prints these errors for an index request.
+    /// of Swift Testing declares a name, so the written code cannot refer to anything in an expansion. An
+    /// expansion refers to written code that is no argument of its macro in one way: it calls members of the types
+    /// of Swift Testing whose names start with `__`, and an extension of such a type can declare one of them
+    /// (see `UnusedDeclarationUsage`). With the returned arguments, the compiler reports an error at every use of
+    /// such a macro and goes on, and SourceKit prints these errors for an index request.
     ///
     /// A file that gets Swift Testing without importing it, through another module that exports it, keeps its
     /// arguments.
@@ -37,7 +39,8 @@ private extension CodeBlockItemListSyntax {
     var importsTesting: Bool {
         contains { statement in
             if let importDeclaration = statement.item.as(ImportDeclSyntax.self) {
-                return importDeclaration.path.first?.name.text == "Testing"
+                // The name without the backticks that it can be written in.
+                return importDeclaration.path.first?.name.identifier?.name == "Testing"
             }
             return statement.item.as(IfConfigDeclSyntax.self)?.clauses.contains { clause in
                 clause.elements?.as(Self.self)?.importsTesting == true

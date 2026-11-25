@@ -108,4 +108,19 @@ public extension Request {
             "key.retrieve_symbol_graph": 0,
         ])
     }
+
+    /// Asks about the declaration with the given USR, which can be one of another module.
+    ///
+    /// - parameter file: A file that is compiled with the given arguments and can see the declaration.
+    static func cursorInfoWithoutSymbolGraph(file: String, usr: String, arguments: [String]) -> Request {
+        .customRequest(request: [
+            "key.request": UID("source.request.cursorinfo"),
+            "key.name": file,
+            "key.sourcefile": file,
+            "key.usr": usr,
+            "key.compilerargs": arguments,
+            "key.cancel_on_subsequent_request": 0,
+            "key.retrieve_symbol_graph": 0,
+        ])
+    }
 }
