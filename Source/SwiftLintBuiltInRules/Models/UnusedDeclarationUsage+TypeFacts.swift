@@ -10,9 +10,17 @@ extension UnusedDeclarationUsage {
         private var types = [Position: String?]()
         /// Asks SourceKit for the USRs of what a declaration overrides or satisfies.
         private let overridden: (SourceKittenDictionary) -> [String]
+        /// Tells whether the source declares a property with `let` and an initial value.
+        private let isInitializedConstant: (SourceKittenDictionary) -> Bool
 
-        init(overridden: @escaping (SourceKittenDictionary) -> [String]) {
+        /// - parameter conformancesMissingFromIndex: For each type, the inherited types of its extensions that
+        ///                                           the file has and its index lacks.
+        init(conformancesMissingFromIndex: [String: Set<String>],
+             overridden: @escaping (SourceKittenDictionary) -> [String],
+             isInitializedConstant: @escaping (SourceKittenDictionary) -> Bool) {
+            facts.conformancesMissingFromIndex = conformancesMissingFromIndex
             self.overridden = overridden
+            self.isInitializedConstant = isInitializedConstant
         }
 
         /// Notes what the entity tells about types.
@@ -20,11 +28,7 @@ extension UnusedDeclarationUsage {
         /// - returns: The entity as a member of the type that its parent declares or extends, if it is one.
         mutating func visit(_ entity: SourceKittenDictionary, in parent: SourceKittenDictionary) -> Member? {
             guard entity.declarationKind != nil else {
-                // A type alias can name the module of a type: `typealias A = Module.P`.
-                if parent.declarationKind == .typealias, entity.isReference, !entity.isModuleReference,
-                   let alias = parent.usr, let usr = entity.usr {
-                    facts.inherited[alias, default: []].insert(usr)
-                }
+                noteTypeAlias(standingFor: entity, declaredBy: parent)
                 noteSwiftTesting(attribute: entity, in: parent)
                 return nil
             }
@@ -36,7 +40,7 @@ extension UnusedDeclarationUsage {
             }
             let owner = declaredOrExtendedType(of: parent)
             if let owner, parent.declarationKind != .protocol {
-                noteCoding(of: owner, by: entity)
+                noteGeneratedCode(of: owner, replacedBy: entity)
             }
             if let owner, owner.hasPrefix(UnusedDeclarationUsage.testingTypePrefix),
                entity.name?.hasPrefix("__") == true, let usr = entity.usr {
@@ -59,7 +63,24 @@ extension UnusedDeclarationUsage {
             return Member(type: type, name: name)
         }
 
+        /// Notes what a type alias stands for, if the parent declares one and the entity is a reference of it.
+        private mutating func noteTypeAlias(standingFor entity: SourceKittenDictionary,
+                                            declaredBy parent: SourceKittenDictionary) {
+            // A type alias can name the module of a type: `typealias A = Module.P`.
+            guard parent.declarationKind == .typealias, entity.isReference, !entity.isModuleReference,
+                  let alias = parent.usr, let usr = entity.usr else {
+                return
+            }
+            facts.inherited[alias, default: []].insert(usr)
+            if entity.isProtocolOrTypeAliasReference {
+                facts.inheritedProtocolsAndTypeAliases.insert(usr)
+            }
+        }
+
         private mutating func noteType(_ type: String, declaredOrExtendedBy entity: SourceKittenDictionary) {
+            if entity.declarationKind == .struct {
+                facts.structs.insert(type)
+            }
             let attributes = entity.enclosedSwiftAttributes
             if attributes.contains(.main) {
                 facts.entryPoints.insert(type)
@@ -67,30 +88,36 @@ extension UnusedDeclarationUsage {
             if attributes.contains(.propertyWrapper) {
                 facts.propertyWrappers.insert(type)
             }
-            let related = entity.relatedUSRs
+            let related = entity.related
             if related.isNotEmpty {
-                facts.inherited[type, default: []].formUnion(related)
+                facts.inherited[type, default: []].formUnion(related.compactMap(\.usr))
+                facts.inheritedProtocolsAndTypeAliases.formUnion(
+                    related.filter(\.isProtocolOrTypeAliasReference).compactMap(\.usr)
+                )
             }
         }
 
-        private mutating func noteCoding(of type: String, by member: SourceKittenDictionary) {
-            let requirements = [UnusedDeclarationUsage.decodingRequirement, UnusedDeclarationUsage.encodingRequirement]
-            var satisfied = member.relatedUSRs.filter(requirements.contains)
-            // Where the index leaves the conformance out, it relates no declaration to a requirement.
-            if satisfied.isEmpty, member.name == "init(from:)" || member.name == "encode(to:)" {
+        /// Notes whether the member takes the place of code that the compiler would generate for the type, and
+        /// whether it is a stored property that such code reads or writes.
+        private mutating func noteGeneratedCode(of type: String, replacedBy member: SourceKittenDictionary) {
+            var satisfied = member.relatedUSRs.filter(GeneratedCode.allRequirements.contains)
+            // Where the index leaves the conformance out, it relates no declaration to a requirement. SourceKit
+            // tells whether one satisfies a requirement, in the file that declares the conformance only.
+            if satisfied.isEmpty, facts.conformancesMissingFromIndex[type] != nil, let name = member.name,
+               GeneratedCode.namesOfRequirements.contains(name) {
                 satisfied = overridden(member)
             }
-            if satisfied.contains(UnusedDeclarationUsage.decodingRequirement) {
-                facts.typesWithOwnDecoding.insert(type)
+            for code in GeneratedCode.allCases where satisfied.contains(where: code.requirements.contains) {
+                facts.typesWithOwnCode[code, default: []].insert(type)
             }
-            if satisfied.contains(UnusedDeclarationUsage.encodingRequirement) {
-                facts.typesWithOwnEncoding.insert(type)
-            }
-            // The compiler generates the getter of a stored property. Generated coding leaves out a lazy one.
+            // The compiler generates the getter of a stored property. Generated code leaves out a lazy one.
             if member.declarationKind == .varInstance, let usr = member.usr,
                member.entities.contains(where: { $0.declarationKind == .functionAccessorGetter && $0.isImplicit }),
                !member.enclosedSwiftAttributes.contains(.lazy) {
                 facts.storedProperties[type, default: []].insert(usr)
+                if isInitializedConstant(member) {
+                    facts.initializedConstants.insert(usr)
+                }
             }
         }
 
@@ -143,7 +170,7 @@ extension SwiftLintFile {
     /// - returns: For each extended type, the inherited types of these extensions.
     func conformancesMissingFromIndex(_ index: SourceKittenDictionary) -> [String: Set<String>] {
         // Without the extension, the index has the references to its types at the top level. Apart from the
-        // modules of its imports, few files have references there, and only those are parsed.
+        // modules of its imports, few files have references there, and only those are walked.
         let topLevelEntities = index.entities
         guard topLevelEntities.contains(where: { $0.isReference && !$0.isModuleReference }) else {
             return [:]
@@ -182,6 +209,23 @@ extension SwiftLintFile {
             conformances[type, default: []].formUnion(inherited)
         }
         return conformances
+    }
+
+    /// Returns a function that tells whether the file declares the property of an entity of its index with `let`
+    /// and an initial value. The file is walked when the function is called for the first time.
+    func initializedConstantFinder() -> (SourceKittenDictionary) -> Bool {
+        var offsetsOfConstants: Set<Int>?
+        let converter = locationConverter
+        return { [self] property in
+            guard let line = property.line, let column = property.column else {
+                return false
+            }
+            let offsets = offsetsOfConstants
+                ?? InitializedConstantCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
+            offsetsOfConstants = offsets
+            // The converter counts lines like the compiler does, also for files with carriage returns.
+            return offsets.contains(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
+        }
     }
 }
 
@@ -242,8 +286,16 @@ private extension SourceKittenDictionary {
     }
 
     var relatedUSRs: [String] {
-        (value["key.related"] as? [[String: any SourceKitRepresentable]])?.compactMap { $0["key.usr"] as? String }
-            ?? []
+        related.compactMap(\.usr)
+    }
+
+    /// What the index relates the declaration to: what it inherits from, overrides or satisfies.
+    var related: [SourceKittenDictionary] {
+        (value["key.related"] as? [[String: any SourceKitRepresentable]])?.map(Self.init) ?? []
+    }
+
+    var isProtocolOrTypeAliasReference: Bool {
+        kind == "source.lang.swift.ref.protocol" || isTypeAliasReference
     }
 
     var usr: String? {
@@ -280,6 +332,24 @@ private extension TypeSyntax {
 private struct Position: Hashable {
     let line: Int64
     let column: Int64
+}
+
+private final class InitializedConstantCollector: SyntaxVisitor {
+    private(set) var offsets = Set<Int>()
+
+    override func visitPost(_ node: VariableDeclSyntax) {
+        guard node.bindingSpecifier.tokenKind == .keyword(.let) else {
+            return
+        }
+        for binding in node.bindings where binding.initializer != nil {
+            // A pattern can name several properties: `let (first, second) = (1, 2)`.
+            for token in binding.pattern.tokens(viewMode: .sourceAccurate) {
+                if case .identifier = token.tokenKind {
+                    offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
+                }
+            }
+        }
+    }
 }
 
 private final class ExtensionCollector: SyntaxVisitor {

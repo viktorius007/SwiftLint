@@ -7,6 +7,8 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
         var declared: Set<DeclaredUSR>
         /// What the file tells about the types whose members are used without a reference in the index.
         var typeFacts = UnusedDeclarationUsage.TypeFacts()
+        /// What the file is compiled with. SourceKit is asked with it about declarations that no file declares.
+        var compilerArguments = [String]()
 
         fileprivate static var empty: Self { Self(referenced: [], declared: []) }
     }
@@ -56,7 +58,8 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
         return FileUSRs(
             referenced: file.referencedUSRs(index: index, editorOpen: editorOpen),
             declared: declared,
-            typeFacts: typeFacts
+            typeFacts: typeFacts,
+            compilerArguments: compilerArguments
         )
     }
 
@@ -73,7 +76,7 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
         // that grows with the square of the number of files.
         violations(in: file,
                    declaredUSRs: storage.collectedInfo(for: self, file: file)?.declared ?? [],
-                   usage: storage.summary(for: self, compute: UnusedDeclarationUsage.init))
+                   usage: storage.summary(for: self) { UnusedDeclarationUsage(of: $0) })
     }
 
     private func violations(in file: SwiftLintFile,
@@ -124,9 +127,11 @@ private extension SwiftLintFile {
                       compilerArguments: [String],
                       configuration: UnusedDeclarationConfiguration)
         -> (declared: Set<UnusedDeclarationRule.DeclaredUSR>, typeFacts: UnusedDeclarationUsage.TypeFacts) {
-        var collector = UnusedDeclarationUsage.TypeFactsCollector { [self] declaration in
-            overriddenUSRs(of: declaration, compilerArguments: compilerArguments)
-        }
+        var collector = UnusedDeclarationUsage.TypeFactsCollector(
+            conformancesMissingFromIndex: conformancesMissingFromIndex(index),
+            overridden: { [self] in overriddenUSRs(of: $0, compilerArguments: compilerArguments) },
+            isInitializedConstant: initializedConstantFinder()
+        )
         let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
             let member = collector.visit(indexEntity, in: parent)
             var declared = self.declaredUSR(indexEntity: indexEntity,
@@ -136,12 +141,7 @@ private extension SwiftLintFile {
             declared?.member = member
             return declared
         }
-        var typeFacts = collector.facts
-        typeFacts.conformancesMissingFromIndex = conformancesMissingFromIndex(index)
-        typeFacts.noteInheritanceOfTypesDeclaredElsewhere {
-            typesInherited(byDeclarationWithUSR: $0, compilerArguments: compilerArguments)
-        }
-        return (Set(declared), typeFacts)
+        return (Set(declared), collector.facts)
     }
 
     func declaredUSR(indexEntity: SourceKittenDictionary,

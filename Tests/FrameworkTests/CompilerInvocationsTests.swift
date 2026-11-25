@@ -142,6 +142,46 @@ struct CompilerInvocationsTests {
         #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
     }
 
+    @Test(.temporaryDirectory, arguments: ["-module-name=Sample\nA.swift\n", "-module-name\nSample\nA.swift\n"])
+    func moduleNameOfAResponseFileGetsAnArgumentOfItsOwn(contents: String) throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try contents.write(to: responseFile, atomically: true, encoding: .utf8)
+        let log = "swiftc @\(responseFile.filepath)"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+    }
+
+    @Test(arguments: ["swiftc -module-name=Sample A.swift", #"swiftc -module-name\=Sample A.swift"#])
+    func moduleNameInTheArgumentOfItsOptionGetsAnArgumentOfItsOwn(log: String) {
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+    }
+
+    // The option counts in the text of a line only where it starts an argument outside of quotes.
+    @Test(.temporaryDirectory, arguments: [
+        #"swiftc -I "-module-name" A.swift"#,
+        #"swiftc -I "-module-name=Sample" A.swift"#,
+        "swiftc -Xfrontend=-module-name=Sample A.swift",
+        "swiftc @missing.rsp A.swift",
+    ])
+    func lineThatNamesNoModuleInItsTextOrInAResponseFileIsNoInvocation(log: String) {
+        #expect(CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log).isEmpty)
+    }
+
+    // In a shell, `\=` is `=` and `\ ` is a space outside of quotes, and each is both characters inside of them.
+    @Test
+    func argumentOfABuildLogKeepsItsBackslashInsideQuotesOnly() {
+        let log = #"swiftc -module-name Sample "A\=B.swift" C\=D.swift "E\ F.swift" G\ H.swift"#
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.filter { $0.hasSuffix(".swift") }
+            == [#"A\=B.swift"#, "C=D.swift", #"E\ F.swift"#, "G H.swift"])
+    }
+
     // In a shell, `\=` is `=` outside of quotes, and it is both characters inside of them.
     @Test(.temporaryDirectory, arguments: [
         (#"@%@/escaped\=arguments.rsp"#, "Unquoted.swift"),

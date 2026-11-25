@@ -237,21 +237,6 @@ struct UnusedImportEquivalenceTests {
             init(_ _parts: (Int, Int)) { self = _parts.0 + _parts.1 }
         }
         """
-
-    private func compileModule(named moduleName: String, source: String, flags: [String] = []) throws {
-        let sourcePath = URL.cwd.appending(path: "\(moduleName).swift")
-        try source.write(to: sourcePath, atomically: true, encoding: .utf8)
-        let module = URL.cwd.appending(path: "\(moduleName).swiftmodule")
-        let compiler = Process()
-        compiler.executableURL = URL(filePath: "/usr/bin/env")
-        compiler.arguments = [
-            "swiftc", "-emit-module", "-module-name", moduleName,
-            "-emit-module-path", module.filepath, sourcePath.filepath,
-        ] + flags
-        try compiler.run()
-        compiler.waitUntilExit()
-        try #require(compiler.terminationStatus == 0)
-    }
     #endif
 
     private func makeLinter(
@@ -291,3 +276,21 @@ struct UnusedImportEquivalenceTests {
         return files.map { Linter(file: $0, configuration: configuration, compilerArguments: arguments) }
     }
 }
+
+#if !os(Windows)
+/// Compiles the source into a module in the current directory.
+func compileModule(named moduleName: String, source: String, flags: [String] = []) throws {
+    let sourcePath = URL.cwd.appending(path: "\(moduleName).swift")
+    try source.write(to: sourcePath, atomically: true, encoding: .utf8)
+    let module = URL.cwd.appending(path: "\(moduleName).swiftmodule")
+    let compiler = Process()
+    compiler.executableURL = URL(filePath: "/usr/bin/env")
+    compiler.arguments = [
+        "swiftc", "-emit-module", "-module-name", moduleName,
+        "-emit-module-path", module.filepath, sourcePath.filepath,
+    ] + flags
+    try compiler.run()
+    compiler.waitUntilExit()
+    try #require(compiler.terminationStatus == 0)
+}
+#endif

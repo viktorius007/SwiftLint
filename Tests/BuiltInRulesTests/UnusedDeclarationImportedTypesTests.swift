@@ -1,3 +1,4 @@
+import Foundation
 import SourceKittenFramework
 import Testing
 
@@ -29,6 +30,33 @@ struct UnusedDeclarationImportedTypesTests {
             ["s:ST"]
         ),
         ("protocol", "<Declaration>protocol Empty</Declaration>", []),
+        // What comes before the colon or the equals sign is the name with its primary associated types or its
+        // generic parameters.
+        (
+            "protocol",
+            #"<Declaration>protocol Boxes&lt;<Type usr="s:6Vendor5BoxesP4ItemQa">Item</Type>&gt;</Declaration>"#,
+            []
+        ),
+        (
+            "protocol",
+            #"<Declaration>protocol Tray&lt;<Type usr="s:6Vendor3BoxP4ItemQa">Item</Type>&gt; : "#
+                + #"<Type usr="s:6Vendor3BoxP">Box</Type> where <Type usr="s:6Vendor4TrayP4Selfxmfp">Self</Type>."#
+                + #"<Type usr="s:6Vendor3BoxP4ItemQa">Item</Type> : \#(sendable)</Declaration>"#,
+            ["s:6Vendor3BoxP"]
+        ),
+        (
+            "protocol",
+            #"<Declaration>protocol Hashable : <Type usr="s:SQ">Equatable</Type>, ~Copyable, ~Escapable"#
+                + "</Declaration>",
+            ["s:SQ"]
+        ),
+        (
+            "typealias",
+            #"<Declaration>typealias Keyed&lt;Key&gt; = [<Type usr="s:6Vendor5Keyeda3Keyxmfp">Key</Type> : "#
+                + #"<Type usr="s:Si">Int</Type>] where <Type usr="s:6Vendor5Keyeda3Keyxmfp">Key</Type> : "#
+                + #"<Type usr="s:SH">Hashable</Type></Declaration>"#,
+            ["s:6Vendor5Keyeda3Keyxmfp", "s:Si"]
+        ),
         // A class passes its coding on to a subclass as it is, without the stored properties of the subclass.
         ("class", #"<Declaration>class Base : <Type usr="s:s7Codablea">Codable</Type></Declaration>"#, []),
         ("struct", "<Declaration>struct Value : \(decodable)</Declaration>", []),
@@ -43,29 +71,75 @@ struct UnusedDeclarationImportedTypesTests {
     }
 
     @Test
-    func typesOfOtherModulesThanTheStandardLibraryAreAskedOnceAndSoAreTheirInheritedTypes() {
-        var facts = UnusedDeclarationUsage.TypeFacts()
-        facts.declaredTypes = ["s:6Sample5ModelV", "s:6Sample5LocalP"]
-        facts.inherited = [
-            "s:6Sample5ModelV": ["s:6Sample5LocalP", "s:6Vendor5OuterP", "s:SQ", "c:objc(pl)NSCoding"],
-            // The USR of a declaration of C starts with the name of its file if no other file can see it.
-            "s:6Sample5LocalP": ["s:s8SendableP", "s:6Vendor5OuterP", "c:1Header.h@T@Name"],
+    func typesThatNoFileDeclaresAreAskedOnceForAllFilesWithTheSameCompilerArguments() {
+        let local = "s:6Sample5LocalP", outer = "s:6Vendor5OuterP", middle = "s:6Vendor3MidP"
+        let alias = "s:6Vendor5AliasA", hashable = "s:SH", equatable = "s:SQ"
+        // What these inherit from is known without a question.
+        let encodable = "s:SE", sendable = "s:s8SendableP"
+        // The USR of a declaration of C starts with the name of its file if no other file can see it.
+        let declarationsOfC: Set = ["c:objc(pl)NSCoding", "c:1Header.h@T@Name"]
+        let collectedInfo = [
+            file("/B.swift"): info(inherited: [outer, alias, local], compiledWith: ["-D", "FIRST"]),
+            file("/A.swift"): info(inherited: [local, outer, equatable, sendable], compiledWith: ["-D", "FIRST"]),
+            file("/C.swift"): info(inherited: declarationsOfC.union([outer]), compiledWith: ["-D", "SECOND"]),
+            file("/D.swift"): info(inherited: declarationsOfC.union([local]), compiledWith: ["-D", "THIRD"]),
+            // A file without a path cannot ask.
+            SwiftLintFile(contents: ""): info(inherited: [outer], compiledWith: ["-D", "FIRST"]),
         ]
-        facts.conformancesMissingFromIndex = ["s:6Sample5ModelV": ["s:6Vendor5AliasA"]]
         let answers: [String: Set<String>] = [
-            "s:6Vendor5OuterP": ["s:6Vendor3MidP", "s:SH"],
-            "s:6Vendor3MidP": ["s:SE", "s:6Vendor5OuterP"],
+            outer: [middle, hashable, local],
+            middle: [encodable, outer],
+            hashable: [equatable],
         ]
-        var asked = [String]()
+        var asked = [Question](), released = [Question]()
+        let sourceKit = UnusedDeclarationUsage.InheritanceSource(
+            inheritedTypes: { usr, file, compilerArguments in
+                asked.append(Question(usr: usr, path: file.path?.filepath, compilerArguments: compilerArguments))
+                return answers[usr] ?? []
+            },
+            release: { file, compilerArguments in
+                released.append(Question(usr: "", path: file.path?.filepath, compilerArguments: compilerArguments))
+            }
+        )
 
-        facts.noteInheritanceOfTypesDeclaredElsewhere {
-            asked.append($0)
-            return answers[$0] ?? []
-        }
+        let inherited = UnusedDeclarationUsage.inheritanceOfTypesDeclaredElsewhere(
+            collectedInfo, ["s:6Sample5ModelV", local], sourceKit: sourceKit
+        )
 
-        #expect(asked.sorted() == ["s:6Vendor3MidP", "s:6Vendor5AliasA", "s:6Vendor5OuterP"])
-        #expect(facts.inherited["s:6Vendor5OuterP"] == ["s:6Vendor3MidP", "s:SH"])
-        #expect(facts.inherited["s:6Vendor3MidP"] == ["s:SE", "s:6Vendor5OuterP"])
-        #expect(facts.inherited["s:6Vendor5AliasA"] == nil)
+        // The first file in the order of the paths asks for all files that are compiled like it. It asks
+        // neither about what a file declares nor about a declaration of C.
+        let first = [outer, middle, alias, hashable, equatable]
+            .map { Question(usr: $0, path: "/A.swift", compilerArguments: ["-D", "FIRST"]) }
+        let second = [outer, middle, hashable, equatable]
+            .map { Question(usr: $0, path: "/C.swift", compilerArguments: ["-D", "SECOND"]) }
+        #expect(asked.sorted() == (first + second).sorted())
+        #expect(released.sorted() == [
+            Question(usr: "", path: "/A.swift", compilerArguments: ["-D", "FIRST"]),
+            Question(usr: "", path: "/C.swift", compilerArguments: ["-D", "SECOND"]),
+        ])
+        #expect(inherited == answers)
+    }
+
+    private func file(_ path: String) -> SwiftLintFile {
+        SwiftLintFile(pathDeferringReading: URL(filePath: path, directoryHint: .notDirectory))
+    }
+
+    private func info(inherited: Set<String>, compiledWith compilerArguments: [String])
+        -> UnusedDeclarationRule.FileUSRs {
+        var facts = UnusedDeclarationUsage.TypeFacts()
+        facts.inheritedProtocolsAndTypeAliases = inherited
+        return UnusedDeclarationRule.FileUSRs(
+            referenced: [], declared: [], typeFacts: facts, compilerArguments: compilerArguments
+        )
+    }
+}
+
+private struct Question: Comparable {
+    let usr: String
+    let path: String?
+    let compilerArguments: [String]
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.path ?? "", lhs.usr) < (rhs.path ?? "", rhs.usr)
     }
 }

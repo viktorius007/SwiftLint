@@ -7,18 +7,29 @@ struct CompilerArgumentsExtractor {
             guard let swiftcIndex = line.range(of: "swiftc ")?.upperBound else {
                 return
             }
-            let invocation = parseCLIArguments(String(line[swiftcIndex...]))
-                .expandingResponseFilesOfABuildLog
-            // The module name can come from a response file.
-            if invocation.contains("-module-name") {
-                compilerInvocations.append(invocation.removingArgumentsThatSourceKitRejects)
+            let arguments = parseCLIArguments(String(line[swiftcIndex...]))
+            // A line that names a module is an invocation. The name can come from a response file too.
+            guard moduleNameOptionsOfABuildLog.contains(where: line.contains)
+                    || arguments.filter({ $0.starts(with: "@") }).expandingResponseFilesOfABuildLog
+                        .contains("-module-name") else {
+                return
             }
+            compilerInvocations.append(
+                arguments.expandingResponseFilesOfABuildLog.removingArgumentsThatSourceKitRejects
+            )
         }
         return compilerInvocations
     }
 }
 
 // MARK: - Private
+
+/// The option that names the module, as the compiler takes it in one argument with the name.
+private let moduleNameWithValue = "-module-name="
+
+/// The option that names the module, as the text of a build log's line has it outside of quotes: with the name
+/// in the next argument, or in the same one after `=`, which a build log can escape.
+private let moduleNameOptionsOfABuildLog = [" -module-name ", " -module-name=", #" -module-name\="#]
 
 /// Stands for a backslash inside quotes in what `parseCLIArguments` returns.
 private let quotedBackslashPlaceholder = "\u{1}"
@@ -102,21 +113,19 @@ private func partiallyFilter(arguments args: [String]) -> ([String], Bool) {
 }
 
 extension Array where Element == String {
-    /// These arguments of a build log's line as the compiler gets them: without the escapes of the log, and with
-    /// the contents of each response file in its place. A response file is not written by the build tool, so it
-    /// has none of the log's escapes.
+    /// These arguments of a build log's line as the compiler gets them: without the escapes of the log, with the
+    /// contents of each response file in its place, and with the module's name in an argument of its own. A
+    /// response file is not written by the build tool, so it has none of the log's escapes.
     fileprivate var expandingResponseFilesOfABuildLog: [String] {
-        flatMap { argument -> [String] in
-            guard argument.starts(with: "@") else {
-                return [argument.replacingOccurrences(of: quotedBackslashPlaceholder, with: "\\")]
-                    .removingEscapesOfBuildLogs
+        // A backslash inside quotes is no escape: a shell passes it on as it is before `=` and before a space.
+        removingEscapesOfBuildLogs
+            .map { $0.replacingOccurrences(of: quotedBackslashPlaceholder, with: "\\") }
+            .expandingResponseFiles(within: [])
+            .flatMap { argument in
+                argument.starts(with: moduleNameWithValue)
+                    ? ["-module-name", String(argument.dropFirst(moduleNameWithValue.count))]
+                    : [argument]
             }
-            // The shell that the log is written for passes a backslash inside quotes on as it is. The path of a
-            // response file is opened, so it has to be the one that the compiler got.
-            return [argument].removingEscapesOfBuildLogs
-                .map { $0.replacingOccurrences(of: quotedBackslashPlaceholder, with: "\\") }
-                .expandingResponseFiles(within: [])
-        }
     }
 
     /// Returns the arguments with the contents of each response file in its place.

@@ -5,12 +5,14 @@
 //   if the type finds several is not known here, so each of them counts as used.
 // * `wrappedValue` and `projectedValue` are read by the properties that a property wrapper is applied to.
 // * The stored properties of a type are written by the `init(from:)` and read by the `encode(to:)` that the
-//   compiler generates for `Decodable` and `Encodable`, also where a type gets one of the two through a
-//   protocol or a type alias of another module (see `noteInheritanceOfTypesDeclaredElsewhere`). The index does
-//   not list a generated one. It marks a declared one, and one that a subclass inherits, as satisfying the
-//   protocol's requirement. Where it leaves the conformance out (see below), SourceKit tells whether a declared
-//   one satisfies the requirement, in the file that declares the conformance. In another file a declared one is
-//   not known, and the stored properties count as used.
+//   compiler generates for `Decodable` and `Encodable`, and the ones of a struct are read by the `==` and the
+//   `hash(into:)` that it generates for `Equatable` and `Hashable` (see `GeneratedCode`), also where a type
+//   gets one of these protocols through a protocol or a type alias that no linted file declares (see
+//   `inheritanceOfTypesDeclaredElsewhere`). The index does not list generated code. It marks a declaration
+//   that takes its place, also one that a subclass inherits or that is declared outside of the type, as
+//   satisfying the protocol's requirement. Where it leaves the conformance out (see below), SourceKit tells
+//   whether a declared one satisfies the requirement, in the file that declares the conformance. In another
+//   file a declared one is not known, and the stored properties count as used.
 // * A conformance uses the members that satisfy the protocol's requirements. The index lists these witnesses
 //   under the conforming declaration (see `isWitnessDeclaredElsewhere`), with one exception: the compiler leaves
 //   an extension without members out of the index if none of its inherited types is a single protocol or class,
@@ -74,12 +76,18 @@ struct UnusedDeclarationUsage {
         var requirements = [String: Set<Name>]()
         /// For each type: the inherited types of its extensions that the index leaves out.
         var conformancesMissingFromIndex = [String: Set<String>]()
+        /// What of `inherited` the index refers to as a protocol or as a type alias. SourceKit is asked about the
+        /// ones that no file declares. The inherited types of an extension that the index leaves out are not
+        /// among them: the index has every extension that holds generated code.
+        var inheritedProtocolsAndTypeAliases = Set<String>()
         /// For each type: the USRs of its stored instance properties that are not lazy.
         var storedProperties = [String: Set<String>]()
-        /// Types with a declaration that satisfies `Decodable`'s `init(from:)`.
-        var typesWithOwnDecoding = Set<String>()
-        /// Types with a declaration that satisfies `Encodable`'s `encode(to:)`.
-        var typesWithOwnEncoding = Set<String>()
+        /// The USRs of the stored instance properties declared with `let` and an initial value.
+        var initializedConstants = Set<String>()
+        /// For each kind of generated code: the types with a declaration that takes its place.
+        var typesWithOwnCode = [GeneratedCode: Set<String>]()
+        /// The structs that the file declares.
+        var structs = Set<String>()
         /// The types, protocols, type aliases and generic parameters that the file declares.
         var declaredTypes = Set<String>()
         /// The tests and suites of Swift Testing, the types that hold a test, and what the expansions of its
@@ -90,16 +98,17 @@ struct UnusedDeclarationUsage {
     static let decodable = "s:Se"
     static let encodable = "s:SE"
     static let codable = "s:s7Codablea"
-    static let decodingRequirement = "s:Se4fromxs7Decoder_p_tKcfc"
-    static let encodingRequirement = "s:SE6encode2toys7Encoder_p_tKF"
     /// What starts the USR of every macro named `Test` in Swift Testing.
     static let testMacroPrefix = "s:7Testing4Test"
     /// What starts the USR of every macro named `Suite` in Swift Testing.
     static let suiteMacroPrefix = "s:7Testing5Suite"
     /// What starts the USR of every type of Swift Testing.
     static let testingTypePrefix = "s:7Testing"
-    /// Protocols of the standard library that cannot have requirements.
-    private static let markerProtocols: Set = ["s:s8SendableP", "s:s16SendableMetatypeP", "s:s15BitwiseCopyableP"]
+    /// Declarations of the standard library whose requirements and inherited types are known here: the ones of
+    /// coding, and the protocols that cannot have requirements.
+    static let knownTypes: Set = [
+        codable, decodable, encodable, "s:s8SendableP", "s:s16SendableMetatypeP", "s:s15BitwiseCopyableP",
+    ]
 
     private let referenced: Set<String>
     private let usedMembers: Set<Member>
@@ -110,7 +119,10 @@ struct UnusedDeclarationUsage {
     /// requirements.
     private let ownersOfUnknownWitnesses: Set<String>
 
-    init(of collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs]) {
+    /// - parameter collectedInfo: What each file tells.
+    /// - parameter sourceKit:     Tells about declarations that no file declares.
+    init(of collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs],
+         sourceKit: InheritanceSource = .sourceKit) {
         let facts = collectedInfo.values.map(\.typeFacts)
         let missingConformances = facts.reduce(into: [String: Set<String>]()) { all, facts in
             all.merge(facts.conformancesMissingFromIndex) { $0.union($1) }
@@ -118,11 +130,14 @@ struct UnusedDeclarationUsage {
         var inherited = facts.reduce(into: missingConformances) { all, facts in
             all.merge(facts.inherited) { $0.union($1) }
         }
-        // `Codable` and its two protocols are the ones of the standard library that this file knows.
+        let declaredTypes = facts.reduce(into: Set<String>()) { $0.formUnion($1.declaredTypes) }
+        inherited.merge(
+            Self.inheritanceOfTypesDeclaredElsewhere(collectedInfo, declaredTypes, sourceKit: sourceKit)
+        ) { $0.union($1) }
         inherited[Self.codable, default: []].formUnion([Self.decodable, Self.encodable])
         let inheritance = Inheritance(inherited)
 
-        var referenced = collectedInfo.values.reduce(into: Self.propertiesUsedByGeneratedCoding(facts, inheritance)) {
+        var referenced = collectedInfo.values.reduce(into: Self.propertiesUsedByGeneratedCode(facts, inheritance)) {
             $0.formUnion($1.referenced)
             $0.formUnion($1.typeFacts.runBySwiftTesting)
         }
@@ -141,9 +156,7 @@ struct UnusedDeclarationUsage {
             all.merge(facts.requirements) { $0.union($1) }
         }
         requirements[Self.encodable, default: []].insert(Name(name: "encode(to:)", kind: .instance))
-        let typesWithKnownRequirements = facts.reduce(
-            into: Self.markerProtocols.union([Self.codable, Self.decodable, Self.encodable])
-        ) { $0.formUnion($1.declaredTypes) }
+        let typesWithKnownRequirements = declaredTypes.union(Self.knownTypes)
         var witnessNames = [String: Set<Name>]()
         var ownersOfUnknownWitnesses = Set<String>()
         for (type, protocols) in missingConformances {
@@ -196,19 +209,25 @@ struct UnusedDeclarationUsage {
         return members
     }
 
-    /// The stored properties of the types for which the compiler generates `init(from:)` or `encode(to:)`.
-    private static func propertiesUsedByGeneratedCoding(_ facts: [TypeFacts], _ inheritance: Inheritance)
+    /// The stored properties that the code reads or writes which the compiler generates for a conformance.
+    private static func propertiesUsedByGeneratedCode(_ facts: [TypeFacts], _ inheritance: Inheritance)
         -> Set<String> {
-        let typesWithGeneratedDecoding = facts.reduce(into: inheritance.withHeirs(decodable)) {
-            $0.subtract($1.typesWithOwnDecoding)
-        }
-        let typesWithGeneratedEncoding = facts.reduce(into: inheritance.withHeirs(encodable)) {
-            $0.subtract($1.typesWithOwnEncoding)
-        }
+        let structs = facts.reduce(into: Set<String>()) { $0.formUnion($1.structs) }
         var properties = Set<String>()
-        for (type, stored) in facts.flatMap(\.storedProperties)
-        where typesWithGeneratedDecoding.contains(type) || typesWithGeneratedEncoding.contains(type) {
-            properties.formUnion(stored)
+        for code in GeneratedCode.allCases {
+            var types = facts.reduce(into: inheritance.withHeirs(code.conformance)) {
+                $0.subtract($1.typesWithOwnCode[code] ?? [])
+            }
+            if code.isForStructsOnly {
+                types.formIntersection(structs)
+            }
+            for facts in facts {
+                for (type, stored) in facts.storedProperties where types.contains(type) {
+                    properties.formUnion(
+                        code.skipsInitializedConstants ? stored.subtracting(facts.initializedConstants) : stored
+                    )
+                }
+            }
         }
         return properties
     }
