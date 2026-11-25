@@ -8,7 +8,7 @@ import Testing
 
 /// Each test has declarations that are used in a way the index does not record as a reference, next to
 /// declarations that nothing uses. A `↓` marks each declaration that is expected to be reported.
-@Suite(.rulesRegistered)
+@Suite(.serialized, .rulesRegistered)
 struct UnusedDeclarationUsageTests {
     @Test(.temporaryDirectory)
     func witnessCanBeDeclaredInAnotherFileThanItsConformance() throws {

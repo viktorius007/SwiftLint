@@ -6,7 +6,7 @@ import Testing
 
 @testable import SwiftLintFramework
 
-@Suite(.rulesRegistered)
+@Suite(.serialized, .rulesRegistered)
 struct UnusedImportEquivalenceTests {
     @Test(.temporaryDirectory)
     func cacheUsesSourceKitCoordinatesAfterCRLF() throws {

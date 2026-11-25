@@ -6,7 +6,7 @@ import Testing
 
 @testable import SwiftLintFramework
 
-@Suite(.rulesRegistered)
+@Suite(.serialized, .rulesRegistered)
 struct AnalyzerRequestTests {
     private static let typeCheckingRequests: Set = [
         "source.request.cursorinfo",

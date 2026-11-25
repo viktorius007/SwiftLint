@@ -7,7 +7,7 @@ import Testing
 
 @testable import SwiftLintFramework
 
-@Suite(.rulesRegistered)
+@Suite(.serialized, .rulesRegistered)
 struct AnalyzerSharedStateTests {
     @Test
     func summaryReadAfterCollectionIncludesNewFile() {
