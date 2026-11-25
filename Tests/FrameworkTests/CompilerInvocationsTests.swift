@@ -193,16 +193,15 @@ struct CompilerInvocationsTests {
         #expect(invocations == [["-I", "-module-name=Includes", "-module-name", "Actual", "A.swift", "-D", "DEBUG"]])
     }
 
-    // A line is cut after the compiler, so an argument with the compiler's name is a file. The arguments of a
-    // compilation database start with the compiler.
-    @Test(arguments: [
-        #"swiftc "swiftc" -module-name Sample A.swift"#,
-        "swiftc swiftc -module-name Sample A.swift",
-    ])
-    func compilerIsDroppedFromTheArgumentsOfACompilationDatabaseOnly(log: String) {
+    // The arguments of a compilation database can start with the compiler. A line is cut after the compiler, and
+    // it loses a first argument that is spelled like it all the same, as in upstream SwiftLint.
+    @Test
+    func firstArgumentSpelledLikeTheCompilerIsDropped() {
+        let log = "swiftc swiftc -module-name Sample A.swift"
+
         let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
 
-        #expect(invocations == [["swiftc", "-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
+        #expect(invocations == [["-module-name", "Sample", "A.swift", "-D", "DEBUG"]])
         #expect(["swiftc", "-module-name", "Sample", "A.swift"].filteringCompilerArguments
             == ["-module-name", "Sample", "A.swift", "-D", "DEBUG"])
     }

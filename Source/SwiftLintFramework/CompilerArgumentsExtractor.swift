@@ -151,12 +151,7 @@ extension Array where Element == String {
 
     /// Returns filtered compiler arguments from `xcodebuild` to something that SourceKit/Clang will accept.
     var filteringCompilerArguments: [String] {
-        var args = removingEscapesOfBuildLogs
-        // The arguments of a compilation database start with the compiler. A line of a build log is cut after it.
-        if args.first == "swiftc" {
-            args.removeFirst()
-        }
-        return args.removingArgumentsThatSourceKitRejects
+        removingEscapesOfBuildLogs.removingArgumentsThatSourceKitRejects
     }
 
     // https://github.com/realm/SwiftLint/issues/3365
@@ -166,6 +161,11 @@ extension Array where Element == String {
 
     fileprivate var removingArgumentsThatSourceKitRejects: [String] {
         var args = self
+        // The arguments of a compilation database can start with the compiler. A line of a build log is cut
+        // after the compiler, and it loses a first argument that is spelled like it all the same.
+        if args.first == "swiftc" {
+            args.removeFirst()
+        }
         args.append(contentsOf: ["-D", "DEBUG"])
         var shouldContinueToFilterArguments = true
         while shouldContinueToFilterArguments {

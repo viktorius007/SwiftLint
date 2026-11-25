@@ -1,8 +1,10 @@
 // The index holds no reference for some uses of a declaration. This file finds the ones that follow from facts
 // about the declaration's type:
 //
-// * `main()` is called by the language if a type marked `@main` finds it by member lookup. Which one it calls
-//   if the type finds several is not known here, so each of them counts as used.
+// * `main()` is called by the language if a type marked `@main` finds it by member lookup. What that lookup
+//   finds and which one it calls is not known here, so every static `main()` without parameters counts as used
+//   that the type, an extension of it or something it inherits from declares, also one that the type cannot
+//   reach, like a private one of its superclass.
 // * `wrappedValue` and `projectedValue` are read by the properties that a property wrapper is applied to.
 // * The stored properties of a type are written by the `init(from:)` and read by the `encode(to:)` that the
 //   compiler generates for `Decodable` and `Encodable`, and the ones of a struct are read by the `==` and the
@@ -36,12 +38,16 @@
 // out are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it
 // shares its name and labels with a used one of the same type, also where a constraint of its extension rules
 // it out. Whatever a type alias mentions counts as inherited by it, also the generic argument in
-// `typealias A = B<C>`.
+// `typealias A = B<C>`. The same holds for what a protocol that no linted file declares names after its colon:
+// with `protocol P: B<C>`, a type that conforms to `P` counts as inheriting from `C` too.
 //
 // A declaration is known by its USR in all files together, so two declarations with one USR are one. Two
 // modules with one name, each seen by other files of one run, have the same USRs: what SourceKit tells about a
 // protocol of the one counts for the other too. So has a module that is compiled with the `-module-abi-name` of
-// another: a type of it with the USR of a type of Swift Testing counts as that type.
+// another: in a file that sees Swift Testing too, a type of it with the USR of a type of Swift Testing counts
+// as that type.
+//
+// Swift Testing is known by the name of its module, `Testing`. Another module of that name counts as it.
 
 /// Everything that all files together use.
 struct UnusedDeclarationUsage {
