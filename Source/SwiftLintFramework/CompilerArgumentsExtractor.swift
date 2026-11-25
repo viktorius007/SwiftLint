@@ -68,6 +68,8 @@ extension Array where Element == String {
             return (try? String(contentsOf: URL(filePath: responseFile, directoryHint: .notDirectory))).flatMap {
                 $0.trimmingCharacters(in: .newlines)
                     .components(separatedBy: "\n")
+                    // The compiler reads `\#` in a response file as `#`.
+                    .map { $0.replacingOccurrences(of: "\\#", with: "#") }
                     .expandingResponseFiles
             } ?? [arg]
         }

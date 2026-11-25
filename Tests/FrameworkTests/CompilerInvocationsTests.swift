@@ -1,4 +1,5 @@
 import Foundation
+import TestHelpers
 import Testing
 
 @testable import SwiftLintFramework
@@ -35,6 +36,20 @@ struct CompilerInvocationsTests {
         let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
 
         #expect(invocations.first?.contains(##"Sources/With\#Hash.swift"##) == true)
+    }
+
+    @Test(.temporaryDirectory)
+    func macroPluginPathOfAResponseFileLosesItsEscape() throws {
+        let responseFile = URL.cwd.appending(path: "arguments.rsp", directoryHint: .notDirectory)
+        try ##"""
+            -external-plugin-path
+            /plugins/testing\#/bin/plugin-server
+            """##.write(to: responseFile, atomically: true, encoding: .utf8)
+        let log = "swiftc -module-name Sample @\(responseFile.filepath) A.swift"
+
+        let invocations = CompilerArgumentsExtractor.allCompilerInvocations(compilerLogs: log)
+
+        #expect(invocations.first?.contains("/plugins/testing#/bin/plugin-server") == true)
     }
 
     @Test
