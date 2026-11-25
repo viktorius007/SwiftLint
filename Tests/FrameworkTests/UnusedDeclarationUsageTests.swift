@@ -116,6 +116,104 @@ struct UnusedDeclarationUsageTests {
     }
 
     @Test(.temporaryDirectory)
+    func witnessOfAMissingConformanceCanComeFromASuperclassOrAProtocolExtension() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            protocol Shelf {
+                func ↓take() -> Int
+                var ↓label: String { get }
+            }
+
+            protocol Tagged {}
+
+            extension Tagged {
+                var label: String { "tagged" }
+                var ↓colour: String { "red" }
+            }
+
+            class Frame {
+                func take() -> Int { 1 }
+                func ↓fold() {}
+            }
+
+            final class ↓Rack: Frame {}
+
+            extension Rack: Shelf & Tagged {}
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory, arguments: ["Rack<Int>", "IntRack"])
+    func missingConformanceCanBeDeclaredForASpecializedType(extended: String) throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            protocol Shelf {
+                func ↓take() -> Int
+            }
+
+            protocol Tagged {}
+
+            struct Rack<Item> {
+                func take() -> Int { 1 }
+                func ↓dust() {}
+            }
+
+            typealias IntRack = Rack<Int>
+
+            func ↓inspect(_ rack: IntRack) {}
+            """,
+            "extension \(extended): Shelf & Tagged {}\n",
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func typeCanSatisfyAnAssociatedTypeOfAMissingConformance() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            protocol Shelf {
+                associatedtype ↓Item
+                typealias ↓Depth = Int
+            }
+
+            protocol Tagged {}
+
+            struct ↓Rack {}
+
+            extension Rack: Shelf & Tagged {}
+            """,
+            """
+            extension Rack {
+                struct Item {}
+                struct ↓Depth {}
+            }
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func genericArgumentOfAnInheritedTypeIsNotInherited() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            protocol Shelf {}
+
+            protocol Tagged {}
+
+            protocol Priced {
+                func ↓price() -> Int
+            }
+
+            typealias Stock<Unit> = Shelf & Tagged
+
+            struct ↓Rack {
+                func ↓price() -> Int { 1 }
+            }
+
+            extension Rack: Stock<Priced> {}
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
     func entryPointIsFoundInWhatTheMainTypeInheritsFrom() throws {
         try expectOnlyMarkedDeclarationsReported(
             in: [
@@ -166,6 +264,56 @@ struct UnusedDeclarationUsageTests {
     }
 
     @Test(.temporaryDirectory)
+    func entryPointOfTheMainTypeHidesAnInheritedOne() throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                protocol Startable {}
+
+                extension Startable {
+                    static func ↓main() {}
+                }
+
+                @main
+                struct Entry: Startable {
+                    static func main() {}
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
+    @Test(.temporaryDirectory, arguments: ["Startable & Tagged", "TaggedTool"])
+    func entryPointIsFoundThroughAConformanceThatIsMissingFromTheIndex(inherited: String) throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                protocol Startable {}
+
+                protocol Tagged {}
+
+                extension Startable {
+                    static func main() {}
+                    static func ↓stop() {}
+                }
+
+                typealias TaggedTool = Startable & Tagged
+
+                func ↓inspect(_ tool: some TaggedTool) {}
+                """,
+                """
+                @main
+                struct Entry {}
+
+                extension Entry: \(inherited) {}
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
+    @Test(.temporaryDirectory)
     func valuesOfAPropertyWrapperAreUsedByTheLanguage() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
             """
@@ -182,13 +330,28 @@ struct UnusedDeclarationUsageTests {
             }
 
             extension Clamped {
-                var projectedValue: Bool { wrappedValue == 10 }
+                var projectedValue: Bool { true }
+                static var ↓wrappedValue: Int { 0 }
             }
             """,
             """
             struct ↓Dial {
                 @Clamped var ↓level: Int
                 var ↓wrappedValue: Int { 0 }
+            }
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func typeNamedLikeAValueOfAPropertyWrapperIsNoSuchValue() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            @propertyWrapper
+            struct ↓Clamped {
+                var wrappedValue: Int
+
+                struct ↓projectedValue {}
             }
             """,
         ])
