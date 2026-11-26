@@ -39,7 +39,7 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "605.0.0-prerelease-2026-09-15"),
         .package(
             url: "https://github.com/viktorius007/SourceKitten.git",
-            revision: "dd55f13d5b0fc4305de76152b14e026ea6e6dada"
+            revision: "d27d57422aeb9cc5243d550a893f41b7a17067c5"
         ),
         .package(url: "https://github.com/jpsim/Yams.git", .upToNextMajor(from: "6.0.2")),
         .package(url: "https://github.com/scottrhoyt/SwiftyTextTable.git", .upToNextMajor(from: "0.9.0")),
