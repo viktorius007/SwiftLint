@@ -46,6 +46,17 @@ extension SourceKittenDictionary {
 }
 
 extension SwiftLintFile {
+    /// The offset in bytes of a line and column that the index gives, if they are in the file. The index ends a
+    /// line at a line feed, also at one that follows a carriage return, like the converter. `stringView` ends a
+    /// line at each of the two.
+    func byteOffset(ofIndexedLine line: Int64, column: Int64) -> ByteCount? {
+        let converter = locationConverter
+        guard converter.isValid(line: Int(line), column: Int(column)) else {
+            return nil
+        }
+        return ByteCount(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
+    }
+
     /// Finds the extensions with inherited types that the file has and its index lacks.
     ///
     /// - returns: For each extended type, the inherited types of these extensions.

@@ -1,6 +1,5 @@
 import Foundation
 import SourceKittenFramework
-import SwiftSyntax
 
 struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
     struct FileUSRs: Hashable {
@@ -242,16 +241,6 @@ private extension SwiftLintFile {
         let overrides = cursorInfo(atPositionOf: indexEntity, compilerArguments: compilerArguments)?
             .value["key.overrides"] as? [[String: any SourceKitRepresentable]]
         return overrides?.compactMap { $0["key.usr"] as? String } ?? []
-    }
-
-    /// The offset in bytes of a line and column that the index gives. The index ends a line at a line feed, also
-    /// at one that follows a carriage return, like the converter. `stringView` ends a line at each of the two.
-    func byteOffset(ofIndexedLine line: Int64, column: Int64) -> ByteCount? {
-        let converter = locationConverter
-        guard converter.isValid(line: Int(line), column: Int(column)) else {
-            return nil
-        }
-        return ByteCount(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
     }
 
     /// What SourceKit tells about the declaration at the entity's position, or about the one referred to there.

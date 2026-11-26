@@ -4,6 +4,7 @@ import SwiftLintCore
 import TestHelpers
 import Testing
 
+@testable import SwiftLintBuiltInRules
 @testable import SwiftLintFramework
 
 /// The index ends a line at a line feed, also at one that follows a carriage return. A limit: after a carriage
@@ -42,5 +43,15 @@ struct UnusedDeclarationLineEndingTests {
             return Location(file: file, byteOffset: ByteCount(offset))
         }
         #expect(reported.sorted() == expected.sorted())
+    }
+
+    @Test
+    func positionThatIsNotInTheFileHasNoOffset() {
+        let file = SwiftLintFile(contents: "first\r\nsecond\n")
+        #expect(file.byteOffset(ofIndexedLine: 2, column: 3) == 9)
+        #expect(file.byteOffset(ofIndexedLine: 0, column: 1) == nil)
+        #expect(file.byteOffset(ofIndexedLine: 4, column: 1) == nil)
+        #expect(file.byteOffset(ofIndexedLine: 1, column: 0) == nil)
+        #expect(file.byteOffset(ofIndexedLine: 1, column: 8) == nil)
     }
 }
