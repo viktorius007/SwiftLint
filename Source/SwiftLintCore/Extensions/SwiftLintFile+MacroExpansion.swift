@@ -15,19 +15,21 @@ public extension SwiftLintFile {
     /// as type-checking the test file as written, and the compiler has no option that turns a macro off. No macro
     /// of Swift Testing declares a name, so the written code cannot refer to anything in an expansion. An
     /// expansion refers to written code that is no argument of its macro in these ways: it names the declaration
-    /// that carries the attribute; for a test in a type, it names that type by all types it is nested in, and
+    /// that carries the attribute; for a test in a type or in an extension, it names that type as the source
+    /// around the test does, with the types it is nested in or as the header of the extension spells it, and
     /// calls its `init()` if the test is an instance method; and it calls members of the types of Swift Testing
     /// whose names start with `__`, of which an extension of such a type can declare one (see
     /// `UnusedDeclarationUsage`). With the returned arguments, the compiler reports an error at every use of such
     /// a macro and goes on, and SourceKit prints these errors for an index request.
     ///
-    /// A file that gets Swift Testing without importing it, through another module that exports it, keeps its
-    /// arguments.
+    /// Whether the file imports `Testing` is read from its text, so an import under a compiler condition that is
+    /// off counts too. A file without such an import that gets Swift Testing through another module that exports
+    /// it keeps its arguments.
     ///
     /// - parameter compilerArguments: The compiler arguments needed to compile this file.
     ///
-    /// - returns: The given arguments, preceded by `argumentsThatKeepTestingMacrosUnexpanded` if this file
-    ///            imports `Testing`.
+    /// - returns: The given arguments, preceded by `argumentsThatKeepTestingMacrosUnexpanded` if the text of this
+    ///            file imports `Testing`.
     func compilerArgumentsWithoutTestingMacros(_ compilerArguments: [String]) -> [String] {
         guard compilerArguments.isNotEmpty, contents.contains("Testing"), syntaxTree.statements.importsTesting else {
             return compilerArguments
@@ -37,7 +39,8 @@ public extension SwiftLintFile {
 }
 
 private extension CodeBlockItemListSyntax {
-    /// Whether one of these statements imports `Testing` or something from it, also under a compiler condition.
+    /// Whether one of these statements imports `Testing` or something from it, also under a compiler condition,
+    /// whether that is on or off.
     var importsTesting: Bool {
         contains { statement in
             if let importDeclaration = statement.item.as(ImportDeclSyntax.self) {

@@ -4,7 +4,7 @@ import SwiftSyntax
 extension UnusedDeclarationUsage {
     /// Gathers the type facts of one file from the entities of its index, visited in any order.
     struct TypeFactsCollector {
-        private(set) var facts = TypeFacts()
+        private var facts = TypeFacts()
         /// The type that the entity at a line and column declares or extends. Looking it up for an extension
         /// reads all its entities, so it is done once and not for every member.
         private var types = [Position: String?]()
@@ -18,6 +18,32 @@ extension UnusedDeclarationUsage {
         private let moduleNameOfType: (String) -> String?
         /// For each USR that SourceKit was asked about: whether Swift Testing declares it.
         private var declaredBySwiftTesting = [String: Bool]()
+        /// For each type that the body of a type declares: that type.
+        private var typeAround = [String: String]()
+        /// For each type that the body of an extension declares: what the header of the extension names.
+        private var namedByExtensionAround = [String: Set<String>]()
+        /// The types with a test of Swift Testing in their body.
+        private var typesHoldingTests = Set<String>()
+        /// What the header of the extension at a line and column names. Like `types`, it is read once for an
+        /// extension and not for every member.
+        private var namedByHeaders = [Position: Set<String>]()
+
+        /// The facts of all visited entities.
+        var typeFacts: TypeFacts {
+            // The code that `@Test` expands to names the type of the test as the source around the test does:
+            // `Outer.Inner.self` in the body of `Inner` in `Outer`, also where an extension of `Outer` declares
+            // `Inner`. For a test in an extension, it names what the header of the extension does.
+            var facts = facts
+            for holder in typesHoldingTests {
+                var type: String? = holder
+                while let current = type {
+                    facts.runBySwiftTesting.insert(current)
+                    facts.runBySwiftTesting.formUnion(namedByExtensionAround[current] ?? [])
+                    type = typeAround[current]
+                }
+            }
+            return facts
+        }
 
         /// - parameter conformancesMissingFromIndex: For each type, the inherited types of its extensions that
         ///                                           the file has and its index lacks.
@@ -48,7 +74,11 @@ extension UnusedDeclarationUsage {
             }
             if entity.declaresType, let usr = entity.usr {
                 facts.declaredTypes.insert(usr)
-                facts.typesAround[usr] = owner
+                if parent.declaresType {
+                    typeAround[usr] = parent.usr
+                } else {
+                    namedByExtensionAround[usr] = namedByHeader(of: parent)
+                }
             }
             if let owner, parent.declarationKind != .protocol {
                 noteGeneratedCode(of: owner, replacedBy: entity)
@@ -145,9 +175,25 @@ extension UnusedDeclarationUsage {
             if let usr = marked.usr {
                 facts.runBySwiftTesting.insert(usr)
             }
-            if marksTest, let owner = declaredOrExtendedType(of: parent) {
-                facts.typesHoldingTests.insert(owner)
+            if marksTest, parent.declaresType, let usr = parent.usr {
+                typesHoldingTests.insert(usr)
+            } else if marksTest {
+                facts.runBySwiftTesting.formUnion(namedByHeader(of: parent))
             }
+        }
+
+        /// What the header of the entity names, if it is an extension.
+        private mutating func namedByHeader(of entity: SourceKittenDictionary) -> Set<String> {
+            guard entity.isExtension, let line = entity.line, let column = entity.column else {
+                return []
+            }
+            let position = Position(line: line, column: column)
+            if let named = namedByHeaders[position] {
+                return named
+            }
+            let named = Set(entity.entities.filter(entity.isExtension(namedWith:)).compactMap(\.usr))
+            namedByHeaders[position] = named
+            return named
         }
 
         /// Whether Swift Testing declares what has the given USR. The USR does not tell: it names the module as
@@ -197,52 +243,6 @@ extension UnusedDeclarationUsage {
 }
 
 extension SwiftLintFile {
-    /// Finds the extensions with inherited types that the file has and its index lacks.
-    ///
-    /// - returns: For each extended type, the inherited types of these extensions.
-    func conformancesMissingFromIndex(_ index: SourceKittenDictionary) -> [String: Set<String>] {
-        // Without the extension, the index has the references to its types at the top level. Apart from the
-        // modules of its imports, few files have references there, and only those are walked.
-        let topLevelEntities = index.entities
-        guard topLevelEntities.contains(where: { $0.isReference && !$0.isModuleReference }) else {
-            return [:]
-        }
-        let extensions = ExtensionCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.extensions)
-            .filter { $0.inheritanceClause != nil }
-        let converter = locationConverter
-        var offsetsOfIndexedExtensions = Set<Int>()
-        var referencesByOffset = [Int: [SourceKittenDictionary]]()
-        for entity in topLevelEntities {
-            guard let line = entity.line, let column = entity.column else {
-                continue
-            }
-            // The converter counts lines like the compiler does, also for files with carriage returns.
-            let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
-            if entity.kind?.starts(with: "source.lang.swift.decl.extension") == true {
-                offsetsOfIndexedExtensions.insert(offset)
-            } else if entity.isReference {
-                referencesByOffset[offset, default: []].append(entity)
-            }
-        }
-        var conformances = [String: Set<String>]()
-        for node in extensions {
-            // The index places an extension at the name of the extended type: at `B` for `A.B<C>`.
-            guard let offset = node.extendedType.nameTokens.first?.positionAfterSkippingLeadingTrivia.utf8Offset,
-                  !offsetsOfIndexedExtensions.contains(offset),
-                  let extended = referencesByOffset[offset],
-                  let type = (extended.first { !$0.isTypeAliasReference } ?? extended.first)?.usr,
-                  let inheritance = node.inheritanceClause else {
-                continue
-            }
-            // The names only: a generic argument of an inherited type is referenced, and not inherited.
-            let inherited = inheritance.inheritedTypes.flatMap(\.type.nameTokens)
-                .flatMap { referencesByOffset[$0.positionAfterSkippingLeadingTrivia.utf8Offset] ?? [] }
-                .compactMap(\.usr)
-            conformances[type, default: []].formUnion(inherited)
-        }
-        return conformances
-    }
-
     /// Returns a function that tells whether the file declares the property of an entity of its index with `let`
     /// and an initial value. The file is walked when the function is called for the first time.
     func initializedConstantFinder() -> (SourceKittenDictionary) -> Bool {
@@ -335,32 +335,6 @@ private extension SourceKittenDictionary {
     }
 }
 
-private extension TypeSyntax {
-    /// The tokens that name the types this type is made of, without their qualifiers and generic arguments:
-    /// `B` for `A.B<C>`, `P` and `Q` for `P & Q`.
-    var nameTokens: [TokenSyntax] {
-        if let type = `as`(IdentifierTypeSyntax.self) {
-            return [type.name]
-        }
-        if let type = `as`(MemberTypeSyntax.self) {
-            return [type.name]
-        }
-        if let type = `as`(CompositionTypeSyntax.self) {
-            return type.elements.flatMap(\.type.nameTokens)
-        }
-        if let type = `as`(AttributedTypeSyntax.self) {
-            return type.baseType.nameTokens
-        }
-        if let type = `as`(SomeOrAnyTypeSyntax.self) {
-            return type.constraint.nameTokens
-        }
-        if let type = `as`(TupleTypeSyntax.self), type.elements.count == 1, let element = type.elements.first {
-            return element.type.nameTokens
-        }
-        return []
-    }
-}
-
 private struct Position: Hashable {
     let line: Int64
     let column: Int64
@@ -381,14 +355,5 @@ private final class InitializedConstantCollector: SyntaxVisitor {
                 }
             }
         }
-    }
-}
-
-private final class ExtensionCollector: SyntaxVisitor {
-    private(set) var extensions = [ExtensionDeclSyntax]()
-
-    override func visit(_ node: ExtensionDeclSyntax) -> SyntaxVisitorContinueKind {
-        extensions.append(node)
-        return .skipChildren
     }
 }

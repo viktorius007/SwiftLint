@@ -182,7 +182,7 @@ struct UnusedDeclarationWitnessTests {
 
             protocol Tagged {}
 
-            typealias ↓Marked = Tagged
+            typealias Marked = Tagged
 
             extension Marked {
                 func take() -> Int { 1 }

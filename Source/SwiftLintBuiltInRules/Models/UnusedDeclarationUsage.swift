@@ -6,8 +6,9 @@
 //   that the type, an extension of it or something it inherits from declares, also one that the type cannot
 //   reach, like a private one of its superclass. Of a type that no linted file declares, the inherited types
 //   are known in part only: SourceKit is asked about protocols and type aliases, and not about classes. So
-//   where any type is marked `@main`, every static `main()` without parameters in an extension of such a type
-//   counts as used too.
+//   where a type marked `@main` inherits, as far as known, from a type that no linted file declares, every
+//   static `main()` without parameters counts as used, whatever type declares it. The protocols of
+//   `knownTypes` are no such type: nothing that could declare a `main()` is inherited through them.
 // * `wrappedValue` and `projectedValue` are read by the properties that a property wrapper is applied to.
 // * The stored properties of a type are written by the `init(from:)` and read by the `encode(to:)` that the
 //   compiler generates for `Decodable` and `Encodable`, and the ones of a struct are read by the `==` and the
@@ -29,8 +30,9 @@
 //   a requirement. It tells so in the file that declares the conformance only. In all other files, the type's
 //   members count as witnesses too.
 // * A test and a suite of Swift Testing are run by the code that `@Test` and `@Suite` expand to. The code of
-//   `@Test` also names the type that holds the test, in its body or in an extension, by all types that it is
-//   nested in: `Outer.Inner.self`. The index has that code only if the compiler expanded the macros, and
+//   `@Test` also names the type of the test as the source around the test does: `Outer.Inner.self` in the body
+//   of `Inner` in the body or in an extension of `Outer`, and what the header of the extension names for a test
+//   in an extension (see `typeFacts`). The index has that code only if the compiler expanded the macros, and
 //   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run
 //   if it carries one of the two attributes. The index tells which macro an attribute refers to, and it lists
 //   that reference right before the declaration that carries the attribute. SourceKit tells which module
@@ -46,9 +48,10 @@
 // A type alias that a linted file declares counts as standing for every type that its declaration mentions,
 // also for a generic argument as in `typealias A = B<C>` and for a type after `where`. A type inherits from the
 // alias where the index or the syntax names the alias as inherited. For a superclass that is written as an
-// alias, the index names the class instead. A protocol or a type alias that no linted file declares counts as
-// inheriting from every type that SourceKit prints after its colon or equals sign and before `where`, also
-// from a generic argument of a superclass, as in `protocol P: B<C>` with a class `B`.
+// alias, the index names the class instead. An extension whose header names a type alias uses the alias and
+// the types around it (see `isExtensionWrittenWithoutItsType`). A protocol or a type alias that no linted file
+// declares counts as inheriting from every type that SourceKit prints after its colon or equals sign and before
+// `where`, also from a generic argument of a superclass, as in `protocol P: B<C>` with a class `B`.
 //
 // A declaration is known by its USR in all files together, so two declarations with one USR are one. Two
 // modules with one name, each seen by other files of one run, have the same USRs: what SourceKit tells about a
@@ -111,13 +114,9 @@ struct UnusedDeclarationUsage {
         var structs = Set<String>()
         /// The types, protocols, type aliases and generic parameters that the file declares.
         var declaredTypes = Set<String>()
-        /// The tests and suites of Swift Testing, and what the expansions of its macros can call.
+        /// The tests and suites of Swift Testing, the types that the expansions of its macros name, and what
+        /// they can call.
         var runBySwiftTesting = Set<String>()
-        /// The types that hold a test of Swift Testing in their body or in an extension.
-        var typesHoldingTests = Set<String>()
-        /// For each type, type alias and generic parameter that the body or an extension of a type declares:
-        /// that type.
-        var typesAround = [String: String]()
     }
 
     static let decodable = "s:Se"
@@ -169,7 +168,6 @@ struct UnusedDeclarationUsage {
             usedMembers.insert(Member(type: type, name: Name(name: "projectedValue", kind: .instance)))
         }
         self.usedMembers = usedMembers
-        referenced.formUnion(Self.typesNamedByTests(facts))
 
         var requirements = facts.reduce(into: [String: Set<Name>]()) { all, facts in
             all.merge(facts.requirements) { $0.union($1) }
@@ -235,32 +233,16 @@ struct UnusedDeclarationUsage {
         let name = Name(name: "main()", kind: .static)
         let owners = inheritance.withInherited(collectedInfo.values.flatMap(\.typeFacts.entryPoints))
         var entryPoints = Set(owners.map { Member(type: $0, name: name) })
-        guard owners.isNotEmpty else {
+        guard !owners.isSubset(of: declaredTypes.union(knownTypes)) else {
             return entryPoints
         }
-        // What a type that no file declares inherits from is known in part only.
+        // What a type that no file declares inherits from is known in part only, so any type can be among it.
         for declaration in collectedInfo.values.flatMap(\.declared) {
-            if let member = declaration.member, member.name == name, !declaredTypes.contains(member.type) {
+            if let member = declaration.member, member.name == name {
                 entryPoints.insert(member)
             }
         }
         return entryPoints
-    }
-
-    /// The types that hold a test of Swift Testing, each with the types it is nested in: the code that `@Test`
-    /// expands to names the type by all of them, as in `Outer.Inner.self`.
-    private static func typesNamedByTests(_ facts: [TypeFacts]) -> Set<String> {
-        let typesAround = facts.reduce(into: [String: String]()) { all, facts in
-            all.merge(facts.typesAround) { first, _ in first }
-        }
-        var named = Set<String>()
-        for holder in facts.flatMap(\.typesHoldingTests) {
-            var type: String? = holder
-            while let current = type, named.insert(current).inserted {
-                type = typesAround[current]
-            }
-        }
-        return named
     }
 
     /// The stored properties that the code reads or writes which the compiler generates for a conformance.

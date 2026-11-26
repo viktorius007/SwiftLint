@@ -58,7 +58,7 @@ struct UnusedDeclarationSwiftTestingTests {
     }
 
     // The code that `@Test` expands to names the type that holds the test by the types around it:
-    // `Outer.Inner.self`. The code that `@Suite` expands to is inside the suite and names no type.
+    // `Outer.Inner.self`. The code that `@Suite` expands to names the suite alone: `Inner.self`.
     @Test(.temporaryDirectory)
     func typesAroundTheTypeThatHoldsATestAreUsedByIt() throws {
         try expectOnlyMarkedDeclarationsReported(in: [

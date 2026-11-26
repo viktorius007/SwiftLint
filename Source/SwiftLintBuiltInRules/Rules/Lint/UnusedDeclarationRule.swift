@@ -114,7 +114,8 @@ private extension SwiftLintFile {
                let line = entity.line,
                let column = entity.column,
                let nameOffset = stringView.byteOffset(forLine: line, bytePosition: column),
-               editorOpen.propertyAtOffset(nameOffset, property: \.kind) != "source.lang.swift.decl.extension" {
+               parent.isExtensionWrittenWithoutItsType(namedWith: entity)
+                || editorOpen.propertyAtOffset(nameOffset, property: \.kind) != "source.lang.swift.decl.extension" {
                 return usr
             }
 
@@ -143,7 +144,7 @@ private extension SwiftLintFile {
             declared?.member = member
             return declared
         }
-        return (Set(declared), collector.facts)
+        return (Set(declared), collector.typeFacts)
     }
 
     func declaredUSR(indexEntity: SourceKittenDictionary,
@@ -381,20 +382,5 @@ private extension SourceKittenDictionary {
         ]
 
         return resultBuilderStaticMethods.contains(name)
-    }
-
-    func extends(reference other: Self) -> Bool {
-        if let kind, kind.starts(with: "source.lang.swift.decl.extension") {
-            let extendedKind = kind.components(separatedBy: ".").last
-            return extendedKind != nil && extendedKind == other.referencedKind
-        }
-        return false
-    }
-
-    private var referencedKind: String? {
-        if let kind, kind.starts(with: "source.lang.swift.ref") {
-            return kind.components(separatedBy: ".").last
-        }
-        return nil
     }
 }
