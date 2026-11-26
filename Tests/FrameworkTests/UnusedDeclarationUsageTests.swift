@@ -8,7 +8,7 @@ import Testing
 
 /// Each test has declarations that the language uses without a reference in the index, next to declarations
 /// that nothing uses. A `↓` marks each declaration that is expected to be reported.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationUsageTests {
     @Test(.temporaryDirectory)
     func entryPointIsFoundInWhatTheMainTypeInheritsFrom() throws {

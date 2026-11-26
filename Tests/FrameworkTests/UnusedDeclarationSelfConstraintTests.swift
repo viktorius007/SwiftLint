@@ -3,7 +3,7 @@ import Testing
 
 /// A protocol inherits from what its `where` clause constrains it to, as from `Shared` in `protocol Linked where
 /// Self: Shared`. The index does not relate the two.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationSelfConstraintTests {
     // `Item: Other` constrains the associated type, and `Linked` does not inherit from `Other`. `Self` can be
     // written in backticks.

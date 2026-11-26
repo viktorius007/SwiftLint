@@ -5,7 +5,7 @@ import Testing
 
 /// What the code names that `@Test` expands to, apart from the type of the test: the index for analyzer rules
 /// lacks that code.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationTestExpansionTests {
     // The code that `@Test` expands to calls the test by its name, and the compiler chooses what that call runs: it
     // can be a function marked `async`, one with a parameter that has a default value, or an inherited member. A

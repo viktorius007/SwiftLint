@@ -7,7 +7,7 @@ import Testing
 
 @testable import SwiftLintFramework
 
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct AnalyzerSharedStateTests {
     @Test
     func summaryReadAfterCollectionIncludesNewFile() {
@@ -15,21 +15,20 @@ struct AnalyzerSharedStateTests {
         storage.collect("first")
         let snapshotTaken = DispatchSemaphore(value: 0)
         let collectionFinished = DispatchSemaphore(value: 0)
-        let firstSummaryFinished = DispatchGroup()
 
-        DispatchQueue.global().async(group: firstSummaryFinished) {
-            _ = storage.value.summary(for: storage.rule) { info in
+        let firstSummary = onAThreadOfItsOwn {
+            storage.value.summary(for: storage.rule) { info in
                 snapshotTaken.signal()
-                #expect(collectionFinished.wait(timeout: .now() + 10) == .success)
+                collectionFinished.wait()
                 return info.values.sorted()
             }
         }
 
-        #expect(snapshotTaken.wait(timeout: .now() + 10) == .success)
+        snapshotTaken.wait()
         storage.collect("second")
         #expect(storage.summary() == ["first", "second"])
         collectionFinished.signal()
-        #expect(firstSummaryFinished.wait(timeout: .now() + 10) == .success)
+        #expect(firstSummary() == ["first"])
         #expect(storage.summary() == ["first", "second"])
     }
 
@@ -95,24 +94,23 @@ struct AnalyzerSharedStateTests {
         let arguments = file.makeCompilerArguments() + ["-module-name", "SharedStateIndex"]
         let oldRequestStarted = DispatchSemaphore(value: 0)
         let newIndexCached = DispatchSemaphore(value: 0)
-        let oldRequestFinished = DispatchGroup()
         let waitDuringIndexRequest: @Sendable (Request) -> Void = { request in
             if request.description.contains("source.request.indexsource") {
                 oldRequestStarted.signal()
-                #expect(newIndexCached.wait(timeout: .now() + 10) == .success)
+                newIndexCached.wait()
             }
         }
-        DispatchQueue.global().async(group: oldRequestFinished) {
+        let oldIndex = onAThreadOfItsOwn {
             SourceKitRequestObserver.$current.withValue(waitDuringIndexRequest) {
-                #expect(indexedFunctions(in: file, arguments: arguments + ["-D", "FIRST"]) == ["first"])
+                indexedFunctions(in: file, arguments: arguments + ["-D", "FIRST"])
             }
         }
 
-        #expect(oldRequestStarted.wait(timeout: .now() + 10) == .success)
+        oldRequestStarted.wait()
         file.invalidateCache()
         #expect(indexedFunctions(in: file, arguments: arguments) == ["second"])
         newIndexCached.signal()
-        #expect(oldRequestFinished.wait(timeout: .now() + 10) == .success)
+        #expect(oldIndex() == ["first"])
         #expect(indexedFunctions(in: file, arguments: arguments) == ["second"])
     }
 
@@ -136,6 +134,26 @@ struct AnalyzerSharedStateTests {
         }
         #expect(scoped.map(\.count) == [1, 1])
         #expect(outer.count == 2)
+    }
+
+    /// Starts the work on a thread of its own. The queues of the dispatch library start a block only when they
+    /// get a thread, and they get none while every core runs a thread of the task pool.
+    ///
+    /// - returns: A function that waits until the work has ended and returns its result. It is called once.
+    private func onAThreadOfItsOwn<Result: Sendable>(
+        _ work: @escaping @Sendable () -> Result
+    ) -> @Sendable () -> Result {
+        let finished = DispatchSemaphore(value: 0)
+        let result = ResultOfAThread<Result>()
+        Thread {
+            result.value = work()
+            finished.signal()
+        }.start()
+        return {
+            finished.wait()
+            // The thread wrote the value before it signalled.
+            return result.value!
+        }
     }
 
     private func makeIndexFile() throws -> SwiftLintFile {
@@ -171,6 +189,11 @@ struct AnalyzerSharedStateTests {
             }
         }
     }
+}
+
+/// Written by one thread before it signals, read by others after they waited for the signal.
+private final class ResultOfAThread<Value>: @unchecked Sendable {
+    var value: Value?
 }
 
 private final class SendableStorage: @unchecked Sendable {

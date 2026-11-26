@@ -2,7 +2,7 @@ import TestHelpers
 import Testing
 
 /// Conformances that the index leaves out, to protocols that the linted files do not declare.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationImportedProtocolTests {
     @Test(.temporaryDirectory)
     func operatorAtFileScopeThatSatisfiesAProtocolOfAnotherModuleIsUsed() throws {

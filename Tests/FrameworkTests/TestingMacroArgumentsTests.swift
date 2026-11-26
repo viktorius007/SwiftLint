@@ -6,7 +6,7 @@ import Testing
 
 @testable import SwiftLintFramework
 
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct TestingMacroArgumentsTests {
     /// What names a plugin that cannot be loaded for the macros of Swift Testing.
     private static let marker = "/dev/null/no-expansion#TestingMacros"

@@ -13,7 +13,7 @@ import Testing
 ///
 /// A limit: after a carriage return that no line feed follows, the index keeps the number of the line and starts
 /// its columns again, so two declarations can have one position.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationLineEndingTests {
     // The rule looks at the place of `Other` and of `Mark` for the name of an extension, and asks SourceKit about
     // the access level of `exported()`, about the attribute of the test and about what the second `area()`

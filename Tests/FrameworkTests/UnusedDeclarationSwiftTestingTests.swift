@@ -4,7 +4,7 @@ import TestHelpers
 import Testing
 
 /// What Swift Testing runs has no reference in an index without macro expansions.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationSwiftTestingTests {
     @Test(.temporaryDirectory)
     func testAtFileScopeIsUsed() throws {

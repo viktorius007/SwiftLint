@@ -5,7 +5,7 @@ import Testing
 
 /// Code that the compiler generates for a conformance reads or writes stored properties without a reference in
 /// the index. A `↓` marks each declaration that is expected to be reported.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationGeneratedCodeTests {
     @Test(.temporaryDirectory)
     func storedPropertyOfAStructIsReadByGeneratedEqualityAndHashing() throws {

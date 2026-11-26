@@ -7,7 +7,7 @@ import Testing
 
 /// Each test has declarations that satisfy a requirement of a protocol without a reference in the index, next
 /// to declarations that nothing uses. A `↓` marks each declaration that is expected to be reported.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationWitnessTests {
     @Test(.temporaryDirectory)
     func witnessCanBeDeclaredInAnotherFileThanItsConformance() throws {

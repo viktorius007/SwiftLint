@@ -7,7 +7,7 @@ import Testing
 @testable import SwiftLintFramework
 
 /// What the header of an extension names: the index lists it among the entities of the extension.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationExtensionTests {
     @Test(.temporaryDirectory)
     func extensionDoesNotUseTheTypeItExtends() throws {

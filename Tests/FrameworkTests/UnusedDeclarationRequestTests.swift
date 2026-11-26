@@ -6,7 +6,7 @@ import Testing
 
 /// What the rule asks SourceKit about generated code. A `↓` marks each declaration that is expected to be
 /// reported.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationRequestTests {
     // The rule asks SourceKit about each declaration once. A second question about what a member satisfies is
     // for a type with a conformance that the index leaves out.

@@ -4,7 +4,7 @@ import Testing
 /// Coding that the compiler generates for a type which gets `Decodable` or `Encodable` through a protocol of
 /// another module. In Foundation, `ParseableFormatStyle` inherits from `FormatStyle`, and that one and
 /// `ParseStrategy` inherit from `Codable`.
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationImportedCodingTests {
     @Test(.temporaryDirectory)
     func storedPropertyIsUsedByCodingGeneratedThroughAProtocolOfAnotherModule() throws {

@@ -9,7 +9,7 @@ import Testing
 // what that type inherits from. That is known in part only, so every `main()` counts as an entry point then.
 
 #if !os(Windows)
-@Suite(.serialized, .rulesRegistered)
+@Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationImportedEntryPointTests {
     @Test(.temporaryDirectory)
     func entryPointIsFoundThroughTheSuperclassOfAClassThatNoFileDeclares() throws {
