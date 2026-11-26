@@ -77,14 +77,14 @@ struct IndexedPositions {
 }
 
 extension SwiftLintFile {
-    /// The number of bytes of a byte order mark that the file on disk starts with and `contents` lacks: the file
-    /// is longer than `contents` by them.
+    /// The number of bytes of a byte order mark that the file on disk starts with and `contents` does not.
     fileprivate func lengthOfByteOrderMarkMissingFromContents() -> Int {
-        let lengthOfMark = 3
-        guard let path, let length = try? path.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+        let mark: [UInt8] = [0xEF, 0xBB, 0xBF]
+        guard let path, !contents.utf8.starts(with: mark), let handle = try? FileHandle(forReadingFrom: path) else {
             return 0
         }
-        return length - contents.utf8.count == lengthOfMark ? lengthOfMark : 0
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: mark.count)).map(Array.init) == mark ? mark.count : 0
     }
 
     /// Finds the extensions with inherited types that the file has and its index lacks.

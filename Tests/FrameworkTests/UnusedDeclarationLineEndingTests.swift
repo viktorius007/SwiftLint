@@ -102,6 +102,19 @@ struct UnusedDeclarationLineEndingTests {
         #expect(positions.offsetForSourceKit(of: second) == 9)
     }
 
+    // The file on disk is three bytes longer than the text, as it is where reading removed a mark.
+    @Test(.temporaryDirectory)
+    func bytesThatTheTextLacksAtTheEndOfTheFileAreNoMark() throws {
+        let path = URL.cwd.appending(path: "Input.swift")
+        let source = "func first() {}\nfunc second() {}"
+        try (source + "   ").write(to: path, atomically: true, encoding: .utf8)
+        let file = SwiftLintFile(pathDeferringReading: path)
+        file.file.contents = source
+        let positions = IndexedPositions(of: file)
+        #expect(positions.offset(ofLine: 1, column: 6) == 5)
+        #expect(positions.offsetForSourceKit(of: 21) == 21)
+    }
+
     /// Writes the lines to a file, with the mark before them, and runs the rule on it.
     ///
     /// - returns: The places of the reported declarations, and the places where the text of the file has each of
