@@ -62,12 +62,12 @@
 //   these types, like the name of a test in the type of the test (see `namedLikeTypesOfTests`), so in every type where
 //   one of them is or inherits from a type that no linted file declares, as `Testing.Tag` is for a tag in an extension
 //   of it. What such a member stands for is not known, and what the code finds in it does not count as used. The names
-//   of a header in parentheses are not known either, the generic arguments of a header are not noted, and a tag that
-//   has one of these names counts as used like any static member, also where nothing names it. That code also writes
-//   names of modules, as `Swift.Never`, `_Concurrency.Actor` and `Testing.Tag`: what takes the place of a module there
-//   is not looked for. The code that the macros of Swift Testing expand to calls members of its types and of
-//   `Swift.Result` whose names start with `__`. An extension of such a type can declare a member that these calls
-//   choose, so each of its members with such a name counts as used.
+//   of a header in parentheses are not known either, and a generic argument after the name of the extended type is not
+//   noted. A tag that has one of the names that count in its type counts as used like any static member of that name,
+//   also where nothing names it. That code also writes names of modules, as `Swift.Never`, `_Concurrency.Actor` and
+//   `Testing.Tag`: what takes the place of a module there is not looked for. The code that the macros of Swift Testing
+//   expand to calls members of its types and of `Swift.Result` whose names start with `__`. An extension of such a type
+//   can declare a member that these calls choose, so each of its members with such a name counts as used.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves out
 // are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it shares

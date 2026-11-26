@@ -188,10 +188,12 @@ struct UnusedDeclarationTestTypeNameTests {
         ])
     }
 
-    // A limit: the generic arguments of the header of an extension are not among the names that are noted. The code
-    // that `@Test` expands to writes `Outer.Box<Int>` and finds the type alias here.
+    // A limit: a generic argument that the header of an extension has after the name of the extended type is not
+    // among the names that are noted. The code that `@Test` expands to writes `Outer.Box<Int>` and finds the type
+    // alias here. An argument before that name is noted: of `(Wrapper<Int>).Item<String>`, `Int` is and `String`
+    // is not.
     @Test(.temporaryDirectory)
-    func memberThatTakesThePlaceOfAGenericArgumentOfTheHeaderIsReported() throws {
+    func memberThatTakesThePlaceOfAGenericArgumentAfterTheExtendedTypeIsReported() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
             """
             import Testing
@@ -201,6 +203,18 @@ struct UnusedDeclarationTestTypeNameTests {
             }
             extension Outer.Box<Int> {
                 typealias ↓Int = Swift.Int
+                @Test static func runs() {}
+            }
+            """,
+            """
+            import Testing
+
+            struct Wrapper<T> {
+                struct Item<U> {}
+            }
+            extension (Wrapper<Int>).Item<String> {
+                typealias Int = Swift.Int
+                typealias ↓String = Swift.String
                 @Test static func runs() {}
             }
             """,

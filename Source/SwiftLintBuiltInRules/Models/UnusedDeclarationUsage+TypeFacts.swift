@@ -43,7 +43,7 @@ extension UnusedDeclarationUsage {
             // It finds the first of these names in the types whose bodies are around it, the innermost first,
             // then in the type that the extension around them extends, and only then at file scope, and each
             // further name in what the name before it stands for. Each name is noted for each of these types;
-            // a generic argument of the header, as in `extension Outer.Box<Int>`, is not.
+            // a generic argument after the name of the extended type, as in `extension Outer.Box<Int>`, is not.
             var facts = facts
             for holder in typesHoldingTests {
                 var types = [String]()
