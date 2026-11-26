@@ -91,7 +91,7 @@ extension UnusedDeclarationUsage {
                 return nil
             }
             guard let type = owner else {
-                return entity.isOperator ? Member(type: Member.fileScope, name: name) : nil
+                return memberAtFileScope(entity, named: name)
             }
             if parent.declarationKind == .protocol {
                 // What a protocol declares in its body is a requirement and no witness. Its type aliases are
@@ -102,6 +102,14 @@ extension UnusedDeclarationUsage {
                 return nil
             }
             return Member(type: type, name: name)
+        }
+
+        /// The entity as what file scope declares under the given name, if it is an operator or a function.
+        private func memberAtFileScope(_ entity: SourceKittenDictionary, named name: Name) -> Member? {
+            if entity.isOperator {
+                return Member(type: Member.fileScope, name: name)
+            }
+            return name.kind == .function ? Member(type: Member.functions, name: name) : nil
         }
 
         /// Notes what a type alias stands for, if the parent declares one and the entity is a reference of it.
@@ -190,16 +198,14 @@ extension UnusedDeclarationUsage {
         /// marked `async` with the same name and labels, it chooses the one marked `async`.
         private mutating func noteDeclarations(namedLike test: SourceKittenDictionary,
                                                in parent: SourceKittenDictionary) {
-            if let type = declaredOrExtendedType(of: parent) {
-                if let name = test.memberName {
-                    facts.membersRunBySwiftTesting.insert(Member(type: type, name: name))
-                }
+            guard let name = test.memberName else {
                 return
             }
-            // Without a known type, the test is no member: a function at file scope. The ones of its file are
-            // looked at.
-            let functions = parent.entities.filter { $0.kind == test.kind && $0.name == test.name }
-            facts.runBySwiftTesting.formUnion(functions.compactMap(\.usr))
+            if let type = declaredOrExtendedType(of: parent) {
+                facts.membersRunBySwiftTesting.insert(Member(type: type, name: name))
+            } else if name.kind == .function {
+                facts.membersRunBySwiftTesting.insert(Member(type: Member.functions, name: name))
+            }
         }
 
         /// What the header of the entity names, if it is an extension.
@@ -282,7 +288,8 @@ extension SwiftLintFile {
 }
 
 private extension SourceKittenDictionary {
-    /// The name by which a type would find this declaration as its member.
+    /// The name by which a type would find this declaration as its member, or by which a call would find it as a
+    /// function at file scope.
     var memberName: UnusedDeclarationUsage.Name? {
         guard let kind = declarationKind, let name else {
             return nil
@@ -295,6 +302,8 @@ private extension SourceKittenDictionary {
             return UnusedDeclarationUsage.Name(name: name, kind: .static)
         case .actor, .associatedtype, .class, .enum, .struct, .typealias:
             return UnusedDeclarationUsage.Name(name: name, kind: .type)
+        case .functionFree:
+            return UnusedDeclarationUsage.Name(name: name, kind: .function)
         default:
             return nil
         }

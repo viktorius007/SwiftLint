@@ -39,15 +39,16 @@
 //   `isDeclaredBySwiftTesting`). For an attribute that another macro attaches, the index has a reference without a
 //   name, and such a test is not known. The code of `@Test` calls the test by its name and labels, and that call
 //   can choose another declaration (see `noteDeclarations`). So a test in a type counts as a member that is used
-//   by name, and a test at file scope stands for every function of its name and labels at the file scope of its
-//   file. The code that the macros of Swift Testing expand to calls members of its types whose names start with
-//   `__`. An extension of such a type can declare a member that these calls choose, so each of its members with
-//   such a name counts as used.
+//   by name, and a test at file scope stands for every function of its name and labels at file scope. The code
+//   that the macros of Swift Testing expand to calls members of its types whose names start with `__`. An
+//   extension of such a type can declare a member that these calls choose, so each of its members with such a name
+//   counts as used.
 //
 // The entry points, the values of a property wrapper, the tests of Swift Testing and the witnesses of an extension
 // that the index leaves out are decided by name. A name tells nothing about types and constraints, so an unused
 // member is kept if it shares its name and labels with a used one of the same type, also where a constraint of its
-// extension rules it out.
+// extension rules it out. So is a function at file scope that shares them with a test at file scope, in whatever
+// file and module.
 //
 // A type alias that a linted file declares counts as standing for every type that its declaration mentions, also
 // for a generic argument as in `typealias A = B<C>` and for a type after `where`. A type inherits from the alias
@@ -77,6 +78,8 @@ struct UnusedDeclarationUsage {
 
         /// Stands for the type of an operator at file scope.
         static let fileScope = ""
+        /// Stands for the type of a function at file scope that is no operator.
+        static let functions = "()"
     }
 
     struct Name: Hashable {
@@ -91,6 +94,8 @@ struct UnusedDeclarationUsage {
         case instance
         case `static`
         case type
+        /// A function at file scope that is no operator.
+        case function
     }
 
     /// What one file tells about types, each named by USR.
@@ -122,7 +127,8 @@ struct UnusedDeclarationUsage {
         /// The tests and suites of Swift Testing, the types that the expansions of its macros name, and what
         /// they can call.
         var runBySwiftTesting = Set<String>()
-        /// The tests of Swift Testing in types, by name: the code that runs a test calls it by its name.
+        /// The tests of Swift Testing by name, in types and at file scope: the code that runs a test calls it by
+        /// its name.
         var membersRunBySwiftTesting = Set<Member>()
     }
 

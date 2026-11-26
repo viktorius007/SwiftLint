@@ -141,6 +141,7 @@ struct UnusedDeclarationSwiftTestingTests {
             @Test func example() {}
             func example() async {}
             func ↓example(times: Int) async {}
+            @Test func elsewhere() {}
 
             struct Checks {
                 @Test func runs() {}
@@ -157,6 +158,9 @@ struct UnusedDeclarationSwiftTestingTests {
             }
             """,
             """
+            func elsewhere() async {}
+            func ↓runs() async {}
+
             extension Split {
                 func ↓runs(times: Int) async {}
             }
