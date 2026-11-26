@@ -132,7 +132,7 @@ private extension SwiftLintFile {
                       configuration: UnusedDeclarationConfiguration)
         -> (declared: Set<UnusedDeclarationRule.DeclaredUSR>, typeFacts: UnusedDeclarationUsage.TypeFacts) {
         let positions = IndexedPositions(of: self)
-        let cursorInfo = { [self] (entity: SourceKittenDictionary) -> SourceKittenDictionary? in
+        let infoOfEntity = { [self] (entity: SourceKittenDictionary) -> SourceKittenDictionary? in
             guard let line = entity.line, let column = entity.column,
                   let offset = positions.offset(ofLine: line, column: column) else {
                 return nil
@@ -141,9 +141,9 @@ private extension SwiftLintFile {
         }
         var collector = UnusedDeclarationUsage.TypeFactsCollector(
             conformancesMissingFromIndex: conformancesMissingFromIndex(index),
-            overridden: { Self.overriddenUSRs(in: cursorInfo($0)) },
+            overridden: { Self.overriddenUSRs(in: infoOfEntity($0)) },
             isInitializedConstant: initializedConstantFinder(),
-            moduleName: { cursorInfo($0)?.moduleName },
+            moduleName: { infoOfEntity($0)?.moduleName },
             moduleNameOfType: { [self] in moduleName(ofTypeWithUSR: $0, compilerArguments: compilerArguments) },
             constrainsSelf: selfConstraintFinder()
         )
