@@ -129,8 +129,43 @@ struct UnusedDeclarationSwiftTestingTests {
         ])
     }
 
+    // The code that `@Test` expands to calls the test by its name and labels from code that can wait, and of two
+    // declarations with that name and these labels the call chooses the one marked `async`. A limit: which one
+    // it chooses is not known, so every one counts as used.
     @Test(.temporaryDirectory)
-    func attributeMarksTheDeclarationThatCarriesItOnly() throws {
+    func declarationThatTheCallOfATestCanChooseIsUsed() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            @Test func example() {}
+            func example() async {}
+            func ↓example(times: Int) async {}
+
+            struct Checks {
+                @Test func runs() {}
+                func runs() async {}
+                static func ↓runs() {}
+                func ↓leftover() async {}
+            }
+
+            struct Split {
+                @Test func runs() {}
+            }
+            extension Split {
+                func runs() async {}
+            }
+            """,
+            """
+            extension Split {
+                func ↓runs(times: Int) async {}
+            }
+            """,
+        ])
+    }
+
+    @Test(.temporaryDirectory)
+    func attributeDoesNotMarkADeclarationOfAnotherName() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
             """
             import Testing

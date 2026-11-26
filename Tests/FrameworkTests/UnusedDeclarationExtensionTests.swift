@@ -80,6 +80,70 @@ struct UnusedDeclarationExtensionTests {
         )
     }
 
+    // The extension is of `Inner`, and it needs the alias for the type around `Inner` to be written.
+    @Test(.temporaryDirectory)
+    func extensionUsesATypeAliasThatQualifiesItsHeader() throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                enum Outer {
+                    struct Inner {}
+                }
+                typealias Alias = Outer
+                typealias ↓Leftover = Outer
+                extension Alias.Inner {
+                    static func start() { print("started") }
+                }
+
+                @main enum Entry {
+                    static func main() { Outer.Inner.start() }
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
+    // A limit: the index has no extension without members, and lists what its header names at file scope. The
+    // first name of the header is no use, every other one is, also the last one, which is the extended type.
+    @Test(.temporaryDirectory)
+    func extensionWithoutMembersUsesAllOfItsHeaderButTheFirstName() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            struct ↓Plain {}
+            extension Plain {}
+            enum ↓First {
+                enum Second {
+                    enum Third {}
+                }
+            }
+            extension First.Second.Third {}
+            """,
+        ])
+    }
+
+    // A limit: the index places the extension of `(Record)` at the parenthesis, before `Record`. So `Record`
+    // counts as used, and `main()` is not known as a member of `Entry`.
+    @Test(.temporaryDirectory)
+    func headerInParenthesesUsesWhatItNamesAndTheTypeOfItsMembersIsNotKnown() throws {
+        try expectOnlyMarkedDeclarationsReported(
+            in: [
+                """
+                struct Record {}
+                extension (Record) {
+                    func ↓leftover() {}
+                }
+
+                @main enum Entry {}
+                extension (Entry) {
+                    static func ↓main() { print("started") }
+                }
+                """,
+            ],
+            compilerFlags: ["-parse-as-library"]
+        )
+    }
+
     // The index places the extension of `Record?` at the question mark, after `Record`.
     @Test(.temporaryDirectory, arguments: [
         ("Record?", "Optional"), ("[Record]", "Array"), ("[String: Record]", "Dictionary"),

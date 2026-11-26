@@ -175,11 +175,31 @@ extension UnusedDeclarationUsage {
             if let usr = marked.usr {
                 facts.runBySwiftTesting.insert(usr)
             }
+            if marksTest {
+                noteDeclarations(namedLike: marked, in: parent)
+            }
             if marksTest, parent.declaresType, let usr = parent.usr {
                 typesHoldingTests.insert(usr)
             } else if marksTest {
                 facts.runBySwiftTesting.formUnion(namedByHeader(of: parent))
             }
+        }
+
+        /// Notes what the call can choose with which the code of `@Test` runs the given test. The call is written
+        /// with the name and the labels of the test, and it is in code that can wait: of a test and a function
+        /// marked `async` with the same name and labels, it chooses the one marked `async`.
+        private mutating func noteDeclarations(namedLike test: SourceKittenDictionary,
+                                               in parent: SourceKittenDictionary) {
+            if let type = declaredOrExtendedType(of: parent) {
+                if let name = test.memberName {
+                    facts.membersRunBySwiftTesting.insert(Member(type: type, name: name))
+                }
+                return
+            }
+            // Without a known type, the test is no member: a function at file scope. The ones of its file are
+            // looked at.
+            let functions = parent.entities.filter { $0.kind == test.kind && $0.name == test.name }
+            facts.runBySwiftTesting.formUnion(functions.compactMap(\.usr))
         }
 
         /// What the header of the entity names, if it is an extension.

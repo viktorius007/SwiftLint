@@ -114,7 +114,9 @@ private extension SwiftLintFile {
                let line = entity.line,
                let column = entity.column,
                let nameOffset = stringView.byteOffset(forLine: line, bytePosition: column),
-               parent.isExtensionWrittenWithoutItsType(namedWith: entity)
+               // A header needs every type alias in it to be written, so it uses the alias.
+               kind == "source.lang.swift.ref.typealias"
+                || parent.isExtensionWrittenWithoutItsType(namedWith: entity)
                 || editorOpen.propertyAtOffset(nameOffset, property: \.kind) != "source.lang.swift.decl.extension" {
                 return usr
             }

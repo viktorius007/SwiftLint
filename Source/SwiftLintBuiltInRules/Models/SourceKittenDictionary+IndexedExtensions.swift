@@ -10,6 +10,10 @@ extension SourceKittenDictionary {
     /// entities: the type, a type alias for it, or a type around it. The index lists these at the extension's
     /// position or before it. Every other reference among the entities is a use: a generic argument, a type
     /// after `where`, an argument of an attribute of a member.
+    ///
+    /// A header in parentheses, `extension (T)`, is not read: the index has such an extension at the opening
+    /// parenthesis and everything that the header names after it. So that header uses what it names, and the
+    /// type that it extends is not known.
     func isExtension(namedWith reference: SourceKittenDictionary) -> Bool {
         guard isExtension, reference.isReference,
               let line, let column, let referenceLine = reference.line, let referenceColumn = reference.column else {

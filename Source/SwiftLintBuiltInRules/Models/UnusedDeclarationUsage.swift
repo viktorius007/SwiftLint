@@ -30,28 +30,33 @@
 //   a requirement. It tells so in the file that declares the conformance only. In all other files, the type's
 //   members count as witnesses too.
 // * A test and a suite of Swift Testing are run by the code that `@Test` and `@Suite` expand to. The code of
-//   `@Test` also names the type of the test as the source around the test does: `Outer.Inner.self` in the body
-//   of `Inner` in the body or in an extension of `Outer`, and what the header of the extension names for a test
-//   in an extension (see `typeFacts`). The index has that code only if the compiler expanded the macros, and
-//   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run
-//   if it carries one of the two attributes. The index tells which macro an attribute refers to, and it lists
-//   that reference right before the declaration that carries the attribute. SourceKit tells which module
-//   declares the macro (see `isDeclaredBySwiftTesting`). The code that the macros of Swift Testing expand to
-//   calls members of its types whose names start with `__`. An extension of such a type can declare a member
-//   that these calls choose, so each of its members with such a name counts as used.
+//   `@Test` also names the type of the test as the source around the test does: `Outer.Inner.self` in the body of
+//   `Inner` in the body or in an extension of `Outer`, and what the header of the extension names for a test in an
+//   extension (see `typeFacts`). The index has that code only if the compiler expanded the macros, and analyzer
+//   rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run if it carries
+//   one of the two attributes. The index tells which macro an attribute refers to, and it lists that reference
+//   right before the declaration that carries the attribute. SourceKit tells which module declares the macro (see
+//   `isDeclaredBySwiftTesting`). For an attribute that another macro attaches, the index has a reference without a
+//   name, and such a test is not known. The code of `@Test` calls the test by its name and labels, and that call
+//   can choose another declaration (see `noteDeclarations`). So a test in a type counts as a member that is used
+//   by name, and a test at file scope stands for every function of its name and labels at the file scope of its
+//   file. The code that the macros of Swift Testing expand to calls members of its types whose names start with
+//   `__`. An extension of such a type can declare a member that these calls choose, so each of its members with
+//   such a name counts as used.
 //
-// The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves
-// out are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it
-// shares its name and labels with a used one of the same type, also where a constraint of its extension rules
-// it out.
+// The entry points, the values of a property wrapper, the tests of Swift Testing and the witnesses of an extension
+// that the index leaves out are decided by name. A name tells nothing about types and constraints, so an unused
+// member is kept if it shares its name and labels with a used one of the same type, also where a constraint of its
+// extension rules it out.
 //
-// A type alias that a linted file declares counts as standing for every type that its declaration mentions,
-// also for a generic argument as in `typealias A = B<C>` and for a type after `where`. A type inherits from the
-// alias where the index or the syntax names the alias as inherited. For a superclass that is written as an
-// alias, the index names the class instead. An extension whose header names a type alias uses the alias and
-// the types around it (see `isExtensionWrittenWithoutItsType`). A protocol or a type alias that no linted file
-// declares counts as inheriting from every type that SourceKit prints after its colon or equals sign and before
-// `where`, also from a generic argument of a superclass, as in `protocol P: B<C>` with a class `B`.
+// A type alias that a linted file declares counts as standing for every type that its declaration mentions, also
+// for a generic argument as in `typealias A = B<C>` and for a type after `where`. A type inherits from the alias
+// where the index or the syntax names the alias as inherited. For a superclass that is written as an alias, the
+// index names the class instead. An extension uses every type alias that its header names. Where the alias stands
+// for the extended type, it also uses the types around the alias (see `isExtensionWrittenWithoutItsType`). A
+// protocol or a type alias that no linted file declares counts as inheriting from every type that SourceKit prints
+// after its colon or equals sign and before `where`, also from a generic argument of a superclass, as in `protocol
+// P: B<C>` with a class `B`.
 //
 // A declaration is known by its USR in all files together, so two declarations with one USR are one. Two
 // modules with one name, each seen by other files of one run, have the same USRs: what SourceKit tells about a
@@ -117,6 +122,8 @@ struct UnusedDeclarationUsage {
         /// The tests and suites of Swift Testing, the types that the expansions of its macros name, and what
         /// they can call.
         var runBySwiftTesting = Set<String>()
+        /// The tests of Swift Testing in types, by name: the code that runs a test calls it by its name.
+        var membersRunBySwiftTesting = Set<Member>()
     }
 
     static let decodable = "s:Se"
@@ -167,6 +174,7 @@ struct UnusedDeclarationUsage {
             usedMembers.insert(Member(type: type, name: Name(name: "wrappedValue", kind: .instance)))
             usedMembers.insert(Member(type: type, name: Name(name: "projectedValue", kind: .instance)))
         }
+        usedMembers.formUnion(facts.flatMap(\.membersRunBySwiftTesting))
         self.usedMembers = usedMembers
 
         var requirements = facts.reduce(into: [String: Set<Name>]()) { all, facts in

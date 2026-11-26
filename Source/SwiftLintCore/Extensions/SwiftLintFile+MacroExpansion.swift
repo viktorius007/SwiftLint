@@ -11,16 +11,16 @@ public extension SwiftLintFile {
 
     /// Returns the compiler arguments that analyzer rules pass to SourceKit for this file.
     ///
-    /// Expanding the macros of Swift Testing and type-checking what they expand to takes several times as long
-    /// as type-checking the test file as written, and the compiler has no option that turns a macro off. No macro
-    /// of Swift Testing declares a name, so the written code cannot refer to anything in an expansion. An
-    /// expansion refers to written code that is no argument of its macro in these ways: it names the declaration
-    /// that carries the attribute; for a test in a type or in an extension, it names that type as the source
-    /// around the test does, with the types it is nested in or as the header of the extension spells it, and
-    /// calls its `init()` if the test is an instance method; and it calls members of the types of Swift Testing
-    /// whose names start with `__`, of which an extension of such a type can declare one (see
-    /// `UnusedDeclarationUsage`). With the returned arguments, the compiler reports an error at every use of such
-    /// a macro and goes on, and SourceKit prints these errors for an index request.
+    /// Expanding the macros of Swift Testing and type-checking what they expand to takes several times as long as
+    /// type-checking the test file as written, and the compiler has no option that turns a macro off. No macro of
+    /// Swift Testing declares a name, so the written code cannot refer to anything in an expansion. An expansion
+    /// refers to written code that is no argument of its macro in these ways: it names the suite, and it calls the
+    /// test by its name and labels; for a test in a type or in an extension, it names that type as the source
+    /// around the test does, with the types it is nested in or as the header of the extension spells it, and calls
+    /// its `init()` if the test is an instance method; and it calls members of the types of Swift Testing whose
+    /// names start with `__`, of which an extension of such a type can declare one (see `UnusedDeclarationUsage`).
+    /// With the returned arguments, the compiler reports an error at every use of such a macro and goes on, and
+    /// SourceKit prints these errors for an index request.
     ///
     /// Whether the file imports `Testing` is read from its text, so an import under a compiler condition that is
     /// off counts too. A file without such an import that gets Swift Testing through another module that exports
