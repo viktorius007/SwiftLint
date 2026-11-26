@@ -195,6 +195,10 @@ extension UnusedDeclarationUsage {
             if marksTest, let name = marked.memberName?.withoutLabels {
                 let type = declaredOrExtendedType(of: parent) ?? Member.unknownType
                 facts.tests.insert(Member(type: type, name: name))
+                // The call of a static test can choose the initializer of a type of its name.
+                if name.kind == .static {
+                    facts.tests.insert(Member(type: type, name: Name(name: name.name, kind: .type)))
+                }
             }
             if marksTest, parent.declaresType, let usr = parent.usr {
                 typesHoldingTests.insert(usr)

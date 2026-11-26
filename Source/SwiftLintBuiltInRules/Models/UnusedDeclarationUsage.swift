@@ -40,15 +40,16 @@
 //   name, and such a test or suite is not known. The code of `@Test` calls the test by its name, and the compiler
 //   chooses what that call runs among everything of that name that the call can reach. It can choose another
 //   declaration than the test: a function marked `async`, one with further parameters that have default values,
-//   one that the type of the test inherits, an inherited property whose value can be called. So a test stands for
-//   every declaration that has its name, whatever its labels, and is of its kind, a method or property of an
-//   instance for a test that is a method of an instance and a static one for a static test, in the type of the
-//   test, in everything that it inherits from, and in the protocols that a type can conform to without naming
-//   them (see `impliedProtocols`). A test at file scope stands for every function of its name at file scope, in
-//   whatever file and module. Where the type of a test is not known, or is or inherits from, as far as known, a
-//   type that no linted file declares, the test stands for its name in every type (see `namedLikeTests`). What
-//   the value of such a property runs when it is called, its `callAsFunction`, is not known. The code of `@Test`
-//   also writes `Void`, so every type and type alias of that name counts as used where a linted file has a test.
+//   one that the type of the test inherits, an inherited property whose value can be called, for a static test
+//   the initializer of an inherited type. So a test stands for every declaration that has its name, whatever its
+//   labels, and is of its kind, a method or property of an instance for a test that is a method of an instance,
+//   a static one or a type for a static test, in the type of the test, in everything that it inherits from, and
+//   in the protocols that a type can conform to without naming them (see `impliedProtocols`). A test at file scope
+//   stands for every function of its name at file scope, in whatever file and module. Where the type of a test is
+//   not known, or is or inherits from, as far as known, a type that no linted file declares, the test stands for
+//   its name in every type (see `namedLikeTests`). What the value of such a property runs when it is called, its
+//   `callAsFunction`, is not known. The code of `@Test` also writes `Void`, so every type and type alias of that
+//   name counts as used where a linted file has a test.
 //   The code that the macros of Swift Testing expand to calls members of its types whose names start with `__`. An
 //   extension of such a type can declare a member that these calls choose, so each of its members with such a name
 //   counts as used.
@@ -144,8 +145,8 @@ struct UnusedDeclarationUsage {
         /// they can call.
         var runBySwiftTesting = Set<String>()
         /// The tests of Swift Testing, each as a member of its type, or of `Member.unknownType`, and named
-        /// without its labels: the code that runs a test calls it by its name, and the compiler chooses what
-        /// that call runs.
+        /// without its labels, a static one also as a type of its name: the code that runs a test calls it by
+        /// its name, and the compiler chooses what that call runs.
         var tests = Set<Member>()
         /// The types and type aliases named `Void`: the code that runs a test writes that name.
         var typesNamedVoid = Set<String>()

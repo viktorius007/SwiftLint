@@ -62,6 +62,33 @@ struct UnusedDeclarationTestExpansionTests {
         ])
     }
 
+    // Of a static test and an inherited type of its name, the call chooses the initializer of the type.
+    @Test(.temporaryDirectory)
+    func typeThatTheCallOfAStaticTestCanChooseIsUsed() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            class Base {
+                struct shared {
+                    init() async {}
+                }
+                struct ↓runs {
+                    init() async {}
+                }
+                struct ↓leftover {}
+            }
+            final class Checks: Base {
+                @Test static func shared() {}
+                @Test func runs() {}
+            }
+            struct ↓Other {
+                struct ↓shared {}
+            }
+            """,
+        ])
+    }
+
     // An enum is `Hashable` and an actor is an `Actor` without naming these protocols, and the index does not
     // list them as inherited.
     @Test(.temporaryDirectory)
