@@ -40,8 +40,9 @@ extension UnusedDeclarationUsage {
             // The code that `@Test` or `@Tag` expands to names the type of the test or tag as the source around
             // it does: `Outer.Inner.self` in the body of `Inner` in `Outer`, also where an extension of `Outer`
             // declares `Inner`. For a test or tag in an extension, it names what the header of the extension does.
-            // It finds each of these names in the types whose bodies are around it, the innermost first, then in
-            // the type that the extension around them extends, and only then at file scope.
+            // It finds the first of these names in the types whose bodies are around it, the innermost first,
+            // then in the type that the extension around them extends, and only then at file scope, and each
+            // further name in what the name before it stands for. Each name is noted for each of these types.
             var facts = facts
             for holder in typesHoldingTests {
                 var types = [String]()
@@ -221,7 +222,7 @@ extension UnusedDeclarationUsage {
                   isDeclaredBySwiftTesting(macro, referredToAtPositionOf: attribute) else {
                 return
             }
-            // A tag is run by nothing: it counts as used where something names it.
+            // Nothing runs a tag. It counts as used where something names it; its name can keep it too (`typeFacts`).
             if !marksTag, let usr = marked.usr {
                 facts.runBySwiftTesting.insert(usr)
             }

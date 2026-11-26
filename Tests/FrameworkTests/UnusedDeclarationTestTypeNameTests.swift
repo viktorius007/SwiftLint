@@ -169,6 +169,40 @@ struct UnusedDeclarationTestTypeNameTests {
             """,
         ])
     }
+
+    // A limit: a tag with the name of its type or of a type around it counts as used like any static member of that
+    // name, also where nothing names it. The code that `@Tag` expands to finds the enum `Feature` here.
+    @Test(.temporaryDirectory)
+    func tagWithTheNameOfATypeAroundItIsKeptWhereNothingNamesIt() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            extension Tag {
+                enum Feature {
+                    @Tag static var Feature: Tag
+                    @Tag static var ↓other: Tag
+                }
+            }
+            """,
+        ])
+    }
+
+    // A limit: a protocol is not among what can take the place of such a name. The code that `@Tag` expands to names
+    // the protocol here.
+    @Test(.temporaryDirectory)
+    func protocolThatTakesThePlaceOfTheTypeOfATagIsReported() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            extension Tag {
+                protocol ↓Tag {}
+                @Testing.Tag static var ↓smoke: Self
+            }
+            """,
+        ])
+    }
 }
 
 private let module = """
