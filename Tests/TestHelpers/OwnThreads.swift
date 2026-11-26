@@ -1,13 +1,15 @@
 import Foundation
 import Testing
 
-/// Runs the tests of a suite on threads of their own instead of the threads of the task pool.
+/// Runs the tests of a suite on threads of their own instead of the threads of the task pool. A test that is
+/// isolated to an actor still runs where its actor runs.
 ///
 /// A test that asks SourceKit waits on its thread for the answer. SourceKit works for the answer on a thread that
 /// the dispatch library gives to its global queue. The task pool has one thread per core. On macOS the kernel
 /// counts a thread of the pool that waits as running, and it gives the global queue no thread while as many
 /// threads run as the machine has cores. So when every thread of the pool waits for SourceKit, no answer comes.
-/// A suite with this trait holds none of the pool's threads.
+/// A suite with this trait holds none of the pool's threads, unless a test of it is isolated to an actor that
+/// runs on the pool. No suite that has the trait has such a test.
 public struct OwnThreads: TestScoping, SuiteTrait, TestTrait {
     /// The name of each thread that runs a part of a test.
     public static let threadName = "SwiftLint test"
