@@ -24,27 +24,41 @@ extension UnusedDeclarationUsage {
         private var declaredBySwiftTesting = [String: Bool]()
         /// For each type that the body of a type declares: that type.
         private var typeAround = [String: String]()
-        /// For each type that the body of an extension declares: what the header of the extension names.
-        private var namedByExtensionAround = [String: Set<String>]()
+        /// For each type that the body of an extension declares: the extended type, if it is known, and what the
+        /// header of the extension names.
+        private var extensionAround = [String: (type: String?, header: Header)]()
+        /// The name of each type that the file declares.
+        private var namesOfTypes = [String: String]()
         /// The types with a test or a tag of Swift Testing in their body.
         private var typesHoldingTests = Set<String>()
-        /// What the header of the extension at a line and column names, and by which names. Like `types`, it is
-        /// read once for an extension and not for every member.
-        private var namedByHeaders = [Position: (usrs: Set<String>, names: Set<String>)]()
+        /// What the header of the extension at a line and column names. Like `types`, it is read once for an
+        /// extension and not for every member.
+        private var namedByHeaders = [Position: Header]()
 
         /// The facts of all visited entities.
         var typeFacts: TypeFacts {
             // The code that `@Test` or `@Tag` expands to names the type of the test or tag as the source around
             // it does: `Outer.Inner.self` in the body of `Inner` in `Outer`, also where an extension of `Outer`
             // declares `Inner`. For a test or tag in an extension, it names what the header of the extension does.
+            // It finds each of these names in the types whose bodies are around it, the innermost first, then in
+            // the type that the extension around them extends, and only then at file scope.
             var facts = facts
             for holder in typesHoldingTests {
+                var types = [String]()
+                var names = Set<String>()
                 var type: String? = holder
                 while let current = type {
                     facts.runBySwiftTesting.insert(current)
-                    facts.runBySwiftTesting.formUnion(namedByExtensionAround[current] ?? [])
+                    types.append(current)
+                    names.formUnion([namesOfTypes[current]].compactMap(\.self))
+                    if let around = extensionAround[current] {
+                        types += [around.type].compactMap(\.self)
+                        names.formUnion(around.header.names)
+                        facts.runBySwiftTesting.formUnion(around.header.usrs)
+                    }
                     type = typeAround[current]
                 }
+                facts.note(names: names, writtenInTypes: types)
             }
             return facts
         }
@@ -113,10 +127,11 @@ extension UnusedDeclarationUsage {
             if entity.name == "Void" {
                 facts.typesNamedVoid.insert(usr)
             }
+            namesOfTypes[usr] = entity.name
             if parent.declaresType {
                 typeAround[usr] = parent.usr
             } else {
-                namedByExtensionAround[usr] = namedByHeader(of: parent).usrs
+                extensionAround[usr] = (declaredOrExtendedType(of: parent), namedByHeader(of: parent))
             }
         }
 
@@ -230,13 +245,14 @@ extension UnusedDeclarationUsage {
             if marksTest || marksTag, parent.declaresType, let usr = parent.usr {
                 typesHoldingTests.insert(usr)
             } else if marksTest || marksTag {
-                facts.runBySwiftTesting.formUnion(namedByHeader(of: parent).usrs)
+                let header = namedByHeader(of: parent)
+                facts.runBySwiftTesting.formUnion(header.usrs)
+                facts.note(names: header.names, writtenInTypes: [declaredOrExtendedType(of: parent)].compactMap(\.self))
             }
         }
 
-        /// What the header of the entity names, and by which names, if it is an extension.
-        private mutating func namedByHeader(of entity: SourceKittenDictionary)
-            -> (usrs: Set<String>, names: Set<String>) {
+        /// What the header of the entity names, if it is an extension.
+        private mutating func namedByHeader(of entity: SourceKittenDictionary) -> Header {
             guard entity.isExtension, let line = entity.line, let column = entity.column else {
                 return ([], [])
             }
@@ -372,6 +388,9 @@ private extension SourceKittenDictionary {
         value["key.usr"] as? String
     }
 }
+
+/// What the header of an extension names, and by which names.
+private typealias Header = (usrs: Set<String>, names: Set<String>)
 
 private struct Position: Hashable {
     let line: Int64
