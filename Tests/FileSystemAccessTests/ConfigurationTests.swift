@@ -630,14 +630,18 @@ struct ConfigurationTests { // swiftlint:disable:this type_body_length
         #expect(configuration.cachePath == "cache/path/2")
     }
 
-    @Test
-    func mainInitWithCachePath() {
+    // Configurations are cached by working directory and configuration files, not by cache path. In a directory
+    // that other tests work in, they would be handed the configuration that is built here.
+    @Test(.temporaryDirectory)
+    func mainInitWithCachePath() throws {
+        try Data("disabled_rules: [todo]\n".utf8).write(to: URL.cwd.appending(path: Configuration.defaultFileName))
         let configuration = Configuration(
             configurationFiles: [],
             cachePath: "cache/path/1"
         )
 
         #expect(configuration.cachePath == "cache/path/1")
+        #expect(!configuration.enabledRuleIdentifiers.contains("todo"))
     }
 
     @Test(.temporaryDirectory)
