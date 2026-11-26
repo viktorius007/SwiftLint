@@ -128,6 +128,52 @@ struct UnusedDeclarationTestExpansionTests {
         ])
     }
 
+    // The name that the call starts with is the one that the source around the test has for the type: in an
+    // extension, the one of its header, here a type alias. The function can be public, and its name can hold
+    // parentheses. A variable at file scope can have the name of a nested type only, and `Outer.Inner()` cannot
+    // choose it.
+    @Test(.temporaryDirectory)
+    func functionThatMakesTheValueHasTheNameOfTheTypeAsTheSourceAroundTheTestHasIt() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            struct Original {}
+            typealias Alias = Original
+            extension Alias {
+                @Test func runs() {}
+            }
+            private func Alias(_ number: Int = 1) async -> Other { Other() }
+            func ↓Original() async -> Other { Other() }
+
+            struct Open {
+                @Test func stored() {}
+            }
+            struct `Quoted(name)` {
+                @Test func quotes() {}
+            }
+            struct Outer {
+                struct Inner {
+                    @Test func nests() {}
+                }
+            }
+            private let ↓Inner: () -> Other = { Other() }
+            """,
+            """
+            public func Open(_ number: Int = 1) async -> Other { Other() }
+            func `Quoted(name)`(_ number: Int = 1) async -> Other { Other() }
+
+            public struct Other {
+                func runs() {}
+                func stored() {}
+                func quotes() {}
+                func ↓nests() {}
+                func ↓leftover() {}
+            }
+            """,
+        ])
+    }
+
     // Of a static test and an inherited type or type alias of its name, the call chooses the initializer of the
     // type.
     @Test(.temporaryDirectory)

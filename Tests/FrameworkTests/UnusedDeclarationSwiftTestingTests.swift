@@ -129,6 +129,35 @@ struct UnusedDeclarationSwiftTestingTests {
         ])
     }
 
+    // The code that `@Tag` expands to names the type that holds the tag by the types around it:
+    // `Tag.Feature.self`. Nothing runs a tag.
+    @Test(.temporaryDirectory)
+    func typesAroundATagAreUsedByIt() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            extension Tag {
+                enum Feature {
+                    @Tag static var ↓integration: Tag
+                }
+                enum First {
+                    enum Second {
+                        @Tag static var ↓slow: Tag
+                    }
+                }
+                enum Split {
+                    enum Part {}
+                }
+                enum ↓Leftover {}
+            }
+            extension Tag.Split.Part {
+                @Tag static var ↓fast: Tag
+            }
+            """,
+        ])
+    }
+
     @Test(.temporaryDirectory)
     func attributeDoesNotMarkADeclarationOfAnotherName() throws {
         try expectOnlyMarkedDeclarationsReported(in: [

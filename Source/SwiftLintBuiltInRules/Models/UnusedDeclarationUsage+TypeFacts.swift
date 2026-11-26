@@ -26,17 +26,17 @@ extension UnusedDeclarationUsage {
         private var typeAround = [String: String]()
         /// For each type that the body of an extension declares: what the header of the extension names.
         private var namedByExtensionAround = [String: Set<String>]()
-        /// The types with a test of Swift Testing in their body.
+        /// The types with a test or a tag of Swift Testing in their body.
         private var typesHoldingTests = Set<String>()
-        /// What the header of the extension at a line and column names. Like `types`, it is read once for an
-        /// extension and not for every member.
-        private var namedByHeaders = [Position: Set<String>]()
+        /// What the header of the extension at a line and column names, and by which names. Like `types`, it is
+        /// read once for an extension and not for every member.
+        private var namedByHeaders = [Position: (usrs: Set<String>, names: Set<String>)]()
 
         /// The facts of all visited entities.
         var typeFacts: TypeFacts {
-            // The code that `@Test` expands to names the type of the test as the source around the test does:
-            // `Outer.Inner.self` in the body of `Inner` in `Outer`, also where an extension of `Outer` declares
-            // `Inner`. For a test in an extension, it names what the header of the extension does.
+            // The code that `@Test` or `@Tag` expands to names the type of the test or tag as the source around
+            // it does: `Outer.Inner.self` in the body of `Inner` in `Outer`, also where an extension of `Outer`
+            // declares `Inner`. For a test or tag in an extension, it names what the header of the extension does.
             var facts = facts
             for holder in typesHoldingTests {
                 var type: String? = holder
@@ -90,6 +90,9 @@ extension UnusedDeclarationUsage {
                 return nil
             }
             guard let type = owner else {
+                if entity.declarationKind == .functionFree, let usr = entity.usr {
+                    facts.functionsAtFileScope[name.withoutLabels.name, default: []].insert(usr)
+                }
                 return memberAtFileScope(entity, named: name)
             }
             if parent.declarationKind == .protocol, entity.declarationKind != .typealias {
@@ -113,7 +116,7 @@ extension UnusedDeclarationUsage {
             if parent.declaresType {
                 typeAround[usr] = parent.usr
             } else {
-                namedByExtensionAround[usr] = namedByHeader(of: parent)
+                namedByExtensionAround[usr] = namedByHeader(of: parent).usrs
             }
         }
 
@@ -197,12 +200,14 @@ extension UnusedDeclarationUsage {
             // The name of a macro ends with its parameters: `Test(_:)`.
             guard attribute.kind == "source.lang.swift.ref.macro", let macro = attribute.usr,
                   let name = attribute.name?.prefix(while: { $0 != "(" }),
-                  case let marksTest = name == "Test", marksTest || name == "Suite",
+                  case let marksTest = name == "Test", case let marksTag = name == "Tag",
+                  marksTest || marksTag || name == "Suite",
                   let marked = parent.declaration(following: attribute),
                   isDeclaredBySwiftTesting(macro, referredToAtPositionOf: attribute) else {
                 return
             }
-            if let usr = marked.usr {
+            // A tag is run by nothing: it counts as used where something names it.
+            if !marksTag, let usr = marked.usr {
                 facts.runBySwiftTesting.insert(usr)
             }
             if marksTest, let name = marked.memberName?.withoutLabels {
@@ -212,28 +217,35 @@ extension UnusedDeclarationUsage {
                 if name.kind == .static {
                     facts.tests.insert(Member(type: type, name: Name(name: name.name, kind: .type)))
                 }
-                // The call of a test that is a method of an instance starts with the name of its type.
-                if name.kind == .instance, let nameOfType = parent.name {
-                    facts.namesOfTypesOfTests[type, default: []].insert(nameOfType)
+                // The call of a test that is a method of an instance starts with the name of its type as the
+                // source around the test has it: in an extension, as its header names the type.
+                if name.kind == .instance {
+                    let names = parent.declaresType ? Set([parent.name].compactMap(\.self))
+                        : namedByHeader(of: parent).names
+                    facts.namesOfTypesOfTests[type, default: []].formUnion(names.map {
+                        Name(name: $0, kind: .type).withoutLabels.name
+                    })
                 }
             }
-            if marksTest, parent.declaresType, let usr = parent.usr {
+            if marksTest || marksTag, parent.declaresType, let usr = parent.usr {
                 typesHoldingTests.insert(usr)
-            } else if marksTest {
-                facts.runBySwiftTesting.formUnion(namedByHeader(of: parent))
+            } else if marksTest || marksTag {
+                facts.runBySwiftTesting.formUnion(namedByHeader(of: parent).usrs)
             }
         }
 
-        /// What the header of the entity names, if it is an extension.
-        private mutating func namedByHeader(of entity: SourceKittenDictionary) -> Set<String> {
+        /// What the header of the entity names, and by which names, if it is an extension.
+        private mutating func namedByHeader(of entity: SourceKittenDictionary)
+            -> (usrs: Set<String>, names: Set<String>) {
             guard entity.isExtension, let line = entity.line, let column = entity.column else {
-                return []
+                return ([], [])
             }
             let position = Position(line: line, column: column)
             if let named = namedByHeaders[position] {
                 return named
             }
-            let named = Set(entity.entities.filter(entity.isExtension(namedWith:)).compactMap(\.usr))
+            let references = entity.entities.filter(entity.isExtension(namedWith:))
+            let named = (usrs: Set(references.compactMap(\.usr)), names: Set(references.compactMap(\.name)))
             namedByHeaders[position] = named
             return named
         }
