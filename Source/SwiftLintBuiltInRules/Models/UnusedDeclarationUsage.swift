@@ -40,7 +40,7 @@
 //   reference without a name, and such a test or suite is not known. The code of `@Test` calls the test by its
 //   name, and the compiler chooses what that call runs among everything of that name that the call can reach. It
 //   can choose another declaration than the test: a function marked `async`, one with further parameters that
-//   have default values, one that the type of the test inherits, an inherited property whose value can be
+//   have default values, one that the type of the test inherits, a property whose value can be
 //   called, for a static test the initializer of an inherited type. So a test stands for every declaration that
 //   has its name, whatever its labels, and is of its kind, a method or property of an instance for a test that
 //   is a method of an instance, and for a static test a static one or a nested struct, enum, class, actor or

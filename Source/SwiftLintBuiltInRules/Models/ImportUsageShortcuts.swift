@@ -206,7 +206,7 @@ private extension SwiftLintFile {
                   let column = entity.column else {
                 return nil
             }
-            // The converter counts lines like the compiler does, also for files with carriage returns.
+            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
             let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
             usrsByOffset[ByteCount(offset), default: []].insert(usr)
             if let name = entity.name?.prefix(while: { $0 != "(" }).utf8, name.isNotEmpty,

@@ -5,7 +5,8 @@ import Testing
 /// Self: Shared`. The index does not relate the two.
 @Suite(.serialized, .rulesRegistered)
 struct UnusedDeclarationSelfConstraintTests {
-    // `Item: Other` constrains the associated type, and `Linked` does not inherit from `Other`.
+    // `Item: Other` constrains the associated type, and `Linked` does not inherit from `Other`. `Self` can be
+    // written in backticks.
     @Test(.temporaryDirectory)
     func testStandsForItsNameInWhatAProtocolConstrainsItselfTo() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
@@ -28,6 +29,15 @@ struct UnusedDeclarationSelfConstraintTests {
             struct Checks: Linked {
                 typealias Item = Element
                 @Test func runs() {}
+            }
+
+            protocol Quoted where `Self`: Marked {}
+            protocol Marked {}
+            extension Marked {
+                func quoted() async {}
+            }
+            struct More: Quoted {
+                @Test func quoted() {}
             }
             """,
         ])

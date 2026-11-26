@@ -203,4 +203,23 @@ struct UnusedDeclarationTestExpansionTests {
             """,
         ])
     }
+
+    // A limit: the code that `@Test` expands to calls the value of the property `runs` here. What the value of a
+    // property runs when it is called is not known.
+    @Test(.temporaryDirectory)
+    func whatAPropertyWithTheNameOfATestRunsWhenItIsCalledIsNotKnown() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            struct Run {
+                func ↓callAsFunction(_ number: Int) async {}
+            }
+            struct Checks {
+                private let runs = Run()
+                @Test(arguments: [1]) func runs(_ number: Int) {}
+            }
+            """,
+        ])
+    }
 }

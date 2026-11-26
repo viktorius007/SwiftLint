@@ -65,7 +65,7 @@ extension SwiftLintFile {
             guard let line = entity.line, let column = entity.column else {
                 continue
             }
-            // The converter counts lines like the compiler does, also for files with carriage returns.
+            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
             let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
             if entity.isExtension {
                 offsetsOfIndexedExtensions.insert(offset)
@@ -107,7 +107,7 @@ extension SwiftLintFile {
             let offsets = offsetsOfConstraints
                 ?? SelfConstraintCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
             offsetsOfConstraints = offsets
-            // The converter counts lines like the compiler does, also for files with carriage returns.
+            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
             return offsets.contains(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
         }
     }
@@ -164,7 +164,8 @@ private final class SelfConstraintCollector: SyntaxVisitor {
     override func visit(_ node: ProtocolDeclSyntax) -> SyntaxVisitorContinueKind {
         for requirement in node.genericWhereClause?.requirements ?? [] {
             if case let .conformanceRequirement(conformance) = requirement.requirement,
-               conformance.leftType.as(IdentifierTypeSyntax.self)?.name.tokenKind == .keyword(.Self) {
+               let constrained = conformance.leftType.as(IdentifierTypeSyntax.self)?.name.text,
+               constrained == "Self" || constrained == "`Self`" {
                 let names = conformance.rightType.nameTokens
                 offsets.formUnion(names.map(\.positionAfterSkippingLeadingTrivia.utf8Offset))
             }

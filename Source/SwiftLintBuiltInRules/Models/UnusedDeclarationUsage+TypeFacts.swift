@@ -293,7 +293,7 @@ extension SwiftLintFile {
             let offsets = offsetsOfConstants
                 ?? InitializedConstantCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
             offsetsOfConstants = offsets
-            // The converter counts lines like the compiler does, also for files with carriage returns.
+            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
             return offsets.contains(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
         }
     }
