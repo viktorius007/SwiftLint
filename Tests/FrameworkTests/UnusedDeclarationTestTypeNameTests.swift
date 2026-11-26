@@ -188,6 +188,25 @@ struct UnusedDeclarationTestTypeNameTests {
         ])
     }
 
+    // A limit: the generic arguments of the header of an extension are not among the names that are noted. The code
+    // that `@Test` expands to writes `Outer.Box<Int>` and finds the type alias here.
+    @Test(.temporaryDirectory)
+    func memberThatTakesThePlaceOfAGenericArgumentOfTheHeaderIsReported() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            enum Outer {
+                struct Box<T> {}
+            }
+            extension Outer.Box<Int> {
+                typealias ↓Int = Swift.Int
+                @Test static func runs() {}
+            }
+            """,
+        ])
+    }
+
     // A limit: a protocol is not among what can take the place of such a name. The code that `@Tag` expands to names
     // the protocol here.
     @Test(.temporaryDirectory)

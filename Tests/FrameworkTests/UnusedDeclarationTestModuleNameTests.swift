@@ -5,7 +5,8 @@ import Testing
 
 /// A limit: the code that the macros of Swift Testing expand to writes names of modules (`Swift.Never`,
 /// `_Concurrency.Actor`, `Testing.Tag`). The index for analyzer rules lacks that code, and what takes the place of a
-/// module there is not looked for: it is reported, with what the code finds in it.
+/// module there is not looked for: it is reported, with what the code finds in it, where nothing else uses or
+/// keeps them.
 @Suite(.serialized, .rulesRegistered, .ownThreads)
 struct UnusedDeclarationTestModuleNameTests {
     // The code of `@Test` writes `_Concurrency.Actor` and finds the two type aliases of `Checks`. The code of `@Tag`
