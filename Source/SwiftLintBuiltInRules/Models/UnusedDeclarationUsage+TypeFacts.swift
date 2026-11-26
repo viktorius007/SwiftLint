@@ -1,5 +1,4 @@
 import SourceKittenFramework
-import SwiftSyntax
 
 extension UnusedDeclarationUsage {
     /// Gathers the type facts of one file from the entities of its index, visited in any order.
@@ -118,7 +117,8 @@ extension UnusedDeclarationUsage {
             }
         }
 
-        /// The entity as what file scope declares under the given name, if it is an operator or a function.
+        /// The entity as what file scope declares under the given name, if it is an operator, or what a call can
+        /// choose there by its name: a function or a variable.
         private func memberAtFileScope(_ entity: SourceKittenDictionary, named name: Name) -> Member? {
             if entity.isOperator {
                 return Member(type: Member.fileScope, name: name)
@@ -212,6 +212,10 @@ extension UnusedDeclarationUsage {
                 if name.kind == .static {
                     facts.tests.insert(Member(type: type, name: Name(name: name.name, kind: .type)))
                 }
+                // The call of a test that is a method of an instance starts with the name of its type.
+                if name.kind == .instance, let nameOfType = parent.name {
+                    facts.namesOfTypesOfTests[type, default: []].insert(nameOfType)
+                }
             }
             if marksTest, parent.declaresType, let usr = parent.usr {
                 typesHoldingTests.insert(usr)
@@ -280,28 +284,9 @@ extension UnusedDeclarationUsage {
     }
 }
 
-extension SwiftLintFile {
-    /// Returns a function that tells whether the file declares the property of an entity of its index with `let`
-    /// and an initial value. The file is walked when the function is called for the first time.
-    func initializedConstantFinder() -> (SourceKittenDictionary) -> Bool {
-        var offsetsOfConstants: Set<Int>?
-        let positions = IndexedPositions(of: self)
-        return { [self] property in
-            guard let line = property.line, let column = property.column,
-                  let offset = positions.offset(ofLine: line, column: column)?.value else {
-                return false
-            }
-            let offsets = offsetsOfConstants
-                ?? InitializedConstantCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
-            offsetsOfConstants = offsets
-            return offsets.contains(offset)
-        }
-    }
-}
-
 private extension SourceKittenDictionary {
     /// The name by which a type would find this declaration as its member, or by which a call would find it as a
-    /// function at file scope.
+    /// function or a variable at file scope.
     var memberName: UnusedDeclarationUsage.Name? {
         guard let kind = declarationKind, let name else {
             return nil
@@ -314,7 +299,7 @@ private extension SourceKittenDictionary {
             return UnusedDeclarationUsage.Name(name: name, kind: .static)
         case .actor, .associatedtype, .class, .enum, .struct, .typealias:
             return UnusedDeclarationUsage.Name(name: name, kind: .type)
-        case .functionFree:
+        case .functionFree, .varGlobal:
             return UnusedDeclarationUsage.Name(name: name, kind: .function)
         default:
             return nil
@@ -379,22 +364,4 @@ private extension SourceKittenDictionary {
 private struct Position: Hashable {
     let line: Int64
     let column: Int64
-}
-
-private final class InitializedConstantCollector: SyntaxVisitor {
-    private(set) var offsets = Set<Int>()
-
-    override func visitPost(_ node: VariableDeclSyntax) {
-        guard node.bindingSpecifier.tokenKind == .keyword(.let) else {
-            return
-        }
-        for binding in node.bindings where binding.initializer != nil {
-            // A pattern can name several properties: `let (first, second) = (1, 2)`.
-            for token in binding.pattern.tokens(viewMode: .sourceAccurate) {
-                if case .identifier = token.tokenKind {
-                    offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
-                }
-            }
-        }
-    }
 }

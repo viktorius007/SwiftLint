@@ -62,6 +62,72 @@ struct UnusedDeclarationTestExpansionTests {
         ])
     }
 
+    // Of a test at file scope and a variable of its name whose value can be called, the call chooses the
+    // variable where the test fits less, here because the value is `async`.
+    @Test(.temporaryDirectory)
+    func variableAtFileScopeThatTheCallOfATestCanChooseIsUsed() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            private let runs: (Int) async -> Void = { _ in }
+            @Test(arguments: [1]) func runs(_ number: Int) {}
+            private let ↓leftover: (Int) async -> Void = { _ in }
+            """,
+        ])
+    }
+
+    // The code that `@Test` expands to makes the value that it calls the test on by calling the name of the type
+    // of the test. Here that call chooses the function of that name at file scope, and the test that then runs
+    // is the one of `Other`. A limit: the type that such a function returns is not known, so the test stands for
+    // its name in every type. Another limit: `Outer.Nested()` cannot choose a function at file scope, and the
+    // function `Nested` counts like the others. The call of a static test starts with `Checks.`, which names
+    // the type.
+    @Test(.temporaryDirectory)
+    func functionWithTheNameOfTheTypeOfATestCanMakeTheValueThatTheTestIsCalledOn() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            struct Checks {
+                @Test func runs() {}
+                @Test static func shared() {}
+            }
+            private func Checks(_ number: Int = 1) async -> Other { Other() }
+            struct Other {
+                func runs() {}
+                func stored() {}
+                func nests() {}
+                func ↓leftover() {}
+                func ↓Plain() async {}
+                static func ↓runs() {}
+                static func ↓shared() {}
+            }
+            struct Split {}
+            extension Split {
+                @Test func stored() {}
+            }
+            struct Plain {
+                @Test func leftover() {}
+            }
+            struct Fixed {
+                @Test static func fixes() {}
+            }
+            struct Outer {
+                struct Nested {
+                    @Test func nests() {}
+                }
+            }
+            """,
+            """
+            func Split(_ number: Int = 1) async -> Other { Other() }
+            func ↓Plane() async -> Other { Other() }
+            func ↓Fixed() async -> Other { Other() }
+            func Nested() async -> Other { Other() }
+            """,
+        ])
+    }
+
     // Of a static test and an inherited type or type alias of its name, the call chooses the initializer of the
     // type.
     @Test(.temporaryDirectory)

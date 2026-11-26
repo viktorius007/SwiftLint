@@ -222,3 +222,40 @@ private final class ExtensionCollector: SyntaxVisitor {
         return .skipChildren
     }
 }
+
+extension SwiftLintFile {
+    /// Returns a function that tells whether the file declares the property of an entity of its index with `let`
+    /// and an initial value. The file is walked when the function is called for the first time.
+    func initializedConstantFinder() -> (SourceKittenDictionary) -> Bool {
+        var offsetsOfConstants: Set<Int>?
+        let positions = IndexedPositions(of: self)
+        return { [self] property in
+            guard let line = property.line, let column = property.column,
+                  let offset = positions.offset(ofLine: line, column: column)?.value else {
+                return false
+            }
+            let offsets = offsetsOfConstants
+                ?? InitializedConstantCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
+            offsetsOfConstants = offsets
+            return offsets.contains(offset)
+        }
+    }
+}
+
+private final class InitializedConstantCollector: SyntaxVisitor {
+    private(set) var offsets = Set<Int>()
+
+    override func visitPost(_ node: VariableDeclSyntax) {
+        guard node.bindingSpecifier.tokenKind == .keyword(.let) else {
+            return
+        }
+        for binding in node.bindings where binding.initializer != nil {
+            // A pattern can name several properties: `let (first, second) = (1, 2)`.
+            for token in binding.pattern.tokens(viewMode: .sourceAccurate) {
+                if case .identifier = token.tokenKind {
+                    offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
+                }
+            }
+        }
+    }
+}

@@ -46,15 +46,18 @@
 //   is a method of an instance, and for a static test a static one or a nested struct, enum, class, actor or
 //   type alias, in the type of the test, in everything that it inherits from, and in the protocols that a type
 //   can conform to without naming them (see `impliedProtocols`). A test at file scope stands for every function
-//   of its name at file scope, in whatever file and module. Where the type of a test is not known, or is or
-//   inherits from, as far as known, a type that no linted file declares, the test stands for its name in every
-//   type (see `namedLikeTests`). What the value of such a property runs when it is called, its `callAsFunction`,
-//   is not known. The code of `@Test` also writes `Void`, so every type and type alias of that name counts as
-//   used where a linted file has a test. Where a nested type or type alias, in the type of a test or in what it
-//   inherits from, has the name of the type of the test or of a type around it, the code of `@Test` names the
-//   nested one. That is not known. The code that the macros of Swift Testing expand to calls members of its
-//   types and of `Swift.Result` whose names start with `__`. An extension of such a type can declare a member
-//   that these calls choose, so each of its members with such a name counts as used.
+//   and variable of its name at file scope, in whatever file and module. Where the type of a test is not known,
+//   or is or inherits from, as far as known, a type that no linted file declares, the test stands for its name
+//   in every type (see `namedLikeTests`). The call of a test that is a method of an instance starts with the
+//   name of its type, and a function at file scope can have that name: then the function counts as used and
+//   the test stands for its name in every type. What the value of a property or variable runs when it is
+//   called, its `callAsFunction`, is not known. The code of `@Test` also writes `Void`, so every type and type
+//   alias of that name counts as used where a linted file has a test. Where a nested type or type alias, in the
+//   type of a test or in what it inherits from, has the name of the type of the test or of a type around it,
+//   the code of `@Test` names the nested one. That is not known. The code that the macros of Swift Testing
+//   expand to calls members of its types and of `Swift.Result` whose names start with `__`. An extension of
+//   such a type can declare a member that these calls choose, so each of its members with such a name counts as
+//   used.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves out
 // are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it shares
@@ -115,6 +118,10 @@ struct UnusedDeclarationUsage {
         /// without its labels, a static one also as a type of its name: the code that runs a test calls it by
         /// its name, and the compiler chooses what that call runs.
         var tests = Set<Member>()
+        /// For the type of each test that is a method of an instance: the name of the type as the index has it,
+        /// without the types around it. The code that runs such a test calls that name to make the value it
+        /// calls the test on. The type that is not known can have several names.
+        var namesOfTypesOfTests = [String: Set<String>]()
         /// The types and type aliases named `Void`: the code that runs a test writes that name.
         var typesNamedVoid = Set<String>()
     }
@@ -174,7 +181,7 @@ struct UnusedDeclarationUsage {
             usedMembers.insert(Member(type: type, name: Name(name: "projectedValue", kind: .instance)))
         }
         self.usedMembers = usedMembers
-        namedLikeTests = Self.namedLikeTests(facts, inheritance, declaredTypes)
+        namedLikeTests = Self.namedLikeTests(collectedInfo, inheritance, declaredTypes)
         if facts.contains(where: \.tests.isNotEmpty) {
             referenced.formUnion(facts.flatMap(\.typesNamedVoid))
         }
@@ -240,20 +247,38 @@ struct UnusedDeclarationUsage {
     /// members of the type of a test, of everything that it inherits from and of `impliedProtocols`. Of a type
     /// that no linted file declares, the inherited types are known in part only. So where the type of a test is
     /// not known, or is such a type or inherits from one, as far as known, the test stands for its name in every
-    /// type. For a test at file scope, that is every function of its name at file scope: nothing else is of its
-    /// kind.
-    private static func namedLikeTests(_ facts: [TypeFacts],
+    /// type. For a test at file scope, that is every function and variable of its name at file scope: nothing
+    /// else is of its kind. The call of a test that is a method of an instance starts with the name of its
+    /// type. Where a function at file scope has that name, the call can choose it, and the type of what it
+    /// returns is not known: the function counts as used, and the test stands for its name in every type.
+    private static func namedLikeTests(_ collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs],
                                        _ inheritance: Inheritance,
                                        _ declaredTypes: Set<String>) -> (members: Set<Member>, names: Set<Name>) {
         let typesKnownInFull = declaredTypes.union(knownTypes)
+        let namesOfTypes = collectedInfo.values.reduce(into: Set<String>()) {
+            $0.formUnion($1.typeFacts.namesOfTypesOfTests.values.joined())
+        }
+        var functions = Set<String>()
+        if namesOfTypes.isNotEmpty {
+            for declaration in collectedInfo.values.flatMap(\.declared) {
+                if let name = declaration.member?.name.withoutLabels, name.kind == .function,
+                   namesOfTypes.contains(name.name) {
+                    functions.insert(name.name)
+                }
+            }
+        }
         var members = Set<Member>()
-        var names = Set<Name>()
-        for test in facts.flatMap(\.tests) {
-            let owners = inheritance.withInherited([test.type])
-            if owners.isSubset(of: typesKnownInFull) {
-                members.formUnion(owners.union(impliedProtocols).map { Member(type: $0, name: test.name) })
-            } else {
-                names.insert(test.name)
+        var names = Set(functions.map { Name(name: $0, kind: .function) })
+        for facts in collectedInfo.values.map(\.typeFacts) {
+            for test in facts.tests {
+                let owners = inheritance.withInherited([test.type])
+                let isMadeByFunction = test.name.kind == .instance
+                    && facts.namesOfTypesOfTests[test.type]?.isDisjoint(with: functions) == false
+                if owners.isSubset(of: typesKnownInFull), !isMadeByFunction {
+                    members.formUnion(owners.union(impliedProtocols).map { Member(type: $0, name: test.name) })
+                } else {
+                    names.insert(test.name)
+                }
             }
         }
         return (members, names)

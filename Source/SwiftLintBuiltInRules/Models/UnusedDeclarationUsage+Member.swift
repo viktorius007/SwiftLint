@@ -8,7 +8,8 @@ extension UnusedDeclarationUsage {
 
         /// Stands for the type of an operator at file scope.
         static let fileScope = ""
-        /// Stands for the type of a function at file scope that is no operator.
+        /// Stands for the type of what a call can choose at file scope by its name: a function that is no
+        /// operator, or a variable.
         static let functions = "()"
         /// Stands for a type that is not known: the one that an extension with a header in parentheses extends,
         /// and the one of a test at file scope.
@@ -32,7 +33,7 @@ extension UnusedDeclarationUsage {
         case instance
         case `static`
         case type
-        /// A function at file scope that is no operator.
+        /// A function at file scope that is no operator, or a variable at file scope.
         case function
     }
 }
