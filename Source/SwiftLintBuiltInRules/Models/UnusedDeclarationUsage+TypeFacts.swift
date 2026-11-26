@@ -285,16 +285,16 @@ extension SwiftLintFile {
     /// and an initial value. The file is walked when the function is called for the first time.
     func initializedConstantFinder() -> (SourceKittenDictionary) -> Bool {
         var offsetsOfConstants: Set<Int>?
-        let converter = locationConverter
+        let positions = IndexedPositions(of: self)
         return { [self] property in
-            guard let line = property.line, let column = property.column else {
+            guard let line = property.line, let column = property.column,
+                  let offset = positions.offset(ofLine: line, column: column)?.value else {
                 return false
             }
             let offsets = offsetsOfConstants
                 ?? InitializedConstantCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
             offsetsOfConstants = offsets
-            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
-            return offsets.contains(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
+            return offsets.contains(offset)
         }
     }
 }

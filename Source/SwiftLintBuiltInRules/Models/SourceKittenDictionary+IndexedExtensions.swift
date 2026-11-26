@@ -1,3 +1,4 @@
+import Foundation
 import SourceKittenFramework
 import SwiftSyntax
 
@@ -45,16 +46,45 @@ extension SourceKittenDictionary {
     }
 }
 
-extension SwiftLintFile {
-    /// The offset in bytes of a line and column that the index gives, if they are in the file. The index ends a
-    /// line at a line feed, also at one that follows a carriage return, like the converter. `stringView` ends a
-    /// line at each of the two.
-    func byteOffset(ofIndexedLine line: Int64, column: Int64) -> ByteCount? {
-        let converter = locationConverter
-        guard converter.isValid(line: Int(line), column: Int(column)) else {
+/// Where the lines and columns that the index gives are in a file.
+///
+/// The index ends a line at a line feed, also at one that follows a carriage return, like the converter.
+/// `stringView` ends a line at each of the two. SourceKit reads the file from disk. Where reading it for `contents`
+/// removed a byte order mark, SourceKit still counts the bytes of the mark, in the columns of the first line and
+/// in every offset. Where `contents` has the mark, the converter counts them too.
+struct IndexedPositions {
+    private let converter: SourceLocationConverter
+    private let byteOrderMarkLength: Int
+
+    init(of file: SwiftLintFile) {
+        converter = file.locationConverter
+        byteOrderMarkLength = file.lengthOfByteOrderMarkMissingFromContents()
+    }
+
+    /// The offset in `contents` of a line and column, if they are in the file.
+    func offset(ofLine line: Int64, column: Int64) -> ByteCount? {
+        let column = Int(column) - (line == 1 ? byteOrderMarkLength : 0)
+        guard converter.isValid(line: Int(line), column: column) else {
             return nil
         }
-        return ByteCount(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
+        return ByteCount(converter.position(ofLine: Int(line), column: column).utf8Offset)
+    }
+
+    /// The offset that SourceKit has for an offset in `contents`.
+    func offsetForSourceKit(of offset: ByteCount) -> ByteCount {
+        offset + ByteCount(byteOrderMarkLength)
+    }
+}
+
+extension SwiftLintFile {
+    /// The number of bytes of a byte order mark that the file on disk starts with and `contents` lacks: the file
+    /// is longer than `contents` by them.
+    fileprivate func lengthOfByteOrderMarkMissingFromContents() -> Int {
+        let lengthOfMark = 3
+        guard let path, let length = try? path.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return 0
+        }
+        return length - contents.utf8.count == lengthOfMark ? lengthOfMark : 0
     }
 
     /// Finds the extensions with inherited types that the file has and its index lacks.
@@ -69,15 +99,14 @@ extension SwiftLintFile {
         }
         let extensions = ExtensionCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.extensions)
             .filter { $0.inheritanceClause != nil }
-        let converter = locationConverter
+        let positions = IndexedPositions(of: self)
         var offsetsOfIndexedExtensions = Set<Int>()
         var referencesByOffset = [Int: [SourceKittenDictionary]]()
         for entity in topLevelEntities {
-            guard let line = entity.line, let column = entity.column else {
+            guard let line = entity.line, let column = entity.column,
+                  let offset = positions.offset(ofLine: line, column: column)?.value else {
                 continue
             }
-            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
-            let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
             if entity.isExtension {
                 offsetsOfIndexedExtensions.insert(offset)
             } else if entity.isReference {
@@ -110,16 +139,16 @@ extension SwiftLintFile {
     /// walked when the function is called for the first time.
     func selfConstraintFinder() -> (SourceKittenDictionary) -> Bool {
         var offsetsOfConstraints: Set<Int>?
-        let converter = locationConverter
+        let positions = IndexedPositions(of: self)
         return { [self] reference in
-            guard let line = reference.line, let column = reference.column else {
+            guard let line = reference.line, let column = reference.column,
+                  let offset = positions.offset(ofLine: line, column: column)?.value else {
                 return false
             }
             let offsets = offsetsOfConstraints
                 ?? SelfConstraintCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
             offsetsOfConstraints = offsets
-            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
-            return offsets.contains(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
+            return offsets.contains(offset)
         }
     }
 }

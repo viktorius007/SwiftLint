@@ -67,9 +67,10 @@ struct AnalyzerRequestTests {
         #expect(!whileValidating.contains { Self.typeCheckingRequests.contains($0.name) })
     }
 
-    @Test
-    func unusedImportAsksOncePerDistinctDeclaration() {
-        let file = SwiftLintFile.testFile(withContents: Self.contents, persistToDisk: true)
+    @Test(arguments: ["\n", "\r\n"])
+    func unusedImportAsksOncePerDistinctDeclaration(lineEnding: String) {
+        let contents = Self.contents.replacingOccurrences(of: "\n", with: lineEnding)
+        let file = SwiftLintFile.testFile(withContents: contents, persistToDisk: true)
         let configuration = Configuration(rulesMode: .onlyConfiguration(["unused_import"]))
         let compilerArguments = file.makeCompilerArguments() + ["-module-name", "Sample"]
         let linter = Linter(file: file, configuration: configuration, compilerArguments: compilerArguments)
@@ -80,7 +81,7 @@ struct AnalyzerRequestTests {
         // The file has 36 tokens that can refer to a module. Only five of them need a request: `Foundation`, the
         // name `sum` in its declaration (which tells how SourceKit names the module being compiled), the first
         // `Int`, the first `+` and the first use of `sum`. Other declaration names, local variables, argument
-        // labels and repeated references need none.
+        // labels and repeated references need none. The index tells what they refer to, by line and column.
         #expect(cursorInfoRequests == 5)
     }
 

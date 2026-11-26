@@ -196,18 +196,17 @@ private extension SwiftLintFile {
             return ([:], [])
         }
         let bytes = Array(contents.utf8)
-        let converter = locationConverter
+        let positions = IndexedPositions(of: self)
         var usrsByOffset = [ByteCount: Set<String>]()
         var offsetsWithMatchingName = Set<ByteCount>()
         var offsetsOfFunctions = Set<ByteCount>()
         _ = index.traverseEntitiesDepthFirst { _, entity -> Void? in
             guard let usr = entity.value["key.usr"] as? String,
                   let line = entity.line,
-                  let column = entity.column else {
+                  let column = entity.column,
+                  let offset = positions.offset(ofLine: line, column: column)?.value else {
                 return nil
             }
-            // The converter ends a line where the index does, also at a carriage return that a line feed follows.
-            let offset = converter.position(ofLine: Int(line), column: Int(column)).utf8Offset
             usrsByOffset[ByteCount(offset), default: []].insert(usr)
             if let name = entity.name?.prefix(while: { $0 != "(" }).utf8, name.isNotEmpty,
                bytes.dropFirst(offset).starts(with: name) {

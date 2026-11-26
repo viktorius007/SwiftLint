@@ -102,7 +102,8 @@ struct UnusedDeclarationRule: AnalyzerRule, CollectingRule {
 
 private extension SwiftLintFile {
     func referencedUSRs(index: SourceKittenDictionary, editorOpen: SourceKittenDictionary) -> Set<String> {
-        Set(index.traverseEntitiesDepthFirst { parent, entity -> String? in
+        let positions = IndexedPositions(of: self)
+        return Set(index.traverseEntitiesDepthFirst { parent, entity -> String? in
             if entity.isWitnessDeclaredElsewhere {
                 return entity.usr
             }
@@ -113,7 +114,7 @@ private extension SwiftLintFile {
                !parent.extends(reference: entity),
                let line = entity.line,
                let column = entity.column,
-               let nameOffset = byteOffset(ofIndexedLine: line, column: column),
+               let nameOffset = positions.offset(ofLine: line, column: column).map(positions.offsetForSourceKit),
                // A header needs every type alias in it to be written, so it uses the alias.
                kind == "source.lang.swift.ref.typealias"
                 || parent.isExtensionWrittenWithoutItsType(namedWith: entity)
@@ -130,17 +131,26 @@ private extension SwiftLintFile {
                       compilerArguments: [String],
                       configuration: UnusedDeclarationConfiguration)
         -> (declared: Set<UnusedDeclarationRule.DeclaredUSR>, typeFacts: UnusedDeclarationUsage.TypeFacts) {
+        let positions = IndexedPositions(of: self)
+        let cursorInfo = { [self] (entity: SourceKittenDictionary) -> SourceKittenDictionary? in
+            guard let line = entity.line, let column = entity.column,
+                  let offset = positions.offset(ofLine: line, column: column) else {
+                return nil
+            }
+            return cursorInfo(at: positions.offsetForSourceKit(of: offset), compilerArguments: compilerArguments)
+        }
         var collector = UnusedDeclarationUsage.TypeFactsCollector(
             conformancesMissingFromIndex: conformancesMissingFromIndex(index),
-            overridden: { [self] in overriddenUSRs(of: $0, compilerArguments: compilerArguments) },
+            overridden: { Self.overriddenUSRs(in: cursorInfo($0)) },
             isInitializedConstant: initializedConstantFinder(),
-            moduleName: { [self] in cursorInfo(atPositionOf: $0, compilerArguments: compilerArguments)?.moduleName },
+            moduleName: { cursorInfo($0)?.moduleName },
             moduleNameOfType: { [self] in moduleName(ofTypeWithUSR: $0, compilerArguments: compilerArguments) },
             constrainsSelf: selfConstraintFinder()
         )
         let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
             let member = collector.visit(indexEntity, in: parent)
             var declared = self.declaredUSR(indexEntity: indexEntity,
+                                            positions: positions,
                                             editorOpen: editorOpen,
                                             compilerArguments: compilerArguments,
                                             configuration: configuration)
@@ -151,6 +161,7 @@ private extension SwiftLintFile {
     }
 
     func declaredUSR(indexEntity: SourceKittenDictionary,
+                     positions: IndexedPositions,
                      editorOpen: SourceKittenDictionary,
                      compilerArguments: [String],
                      configuration: UnusedDeclarationConfiguration) -> UnusedDeclarationRule.DeclaredUSR? {
@@ -184,12 +195,13 @@ private extension SwiftLintFile {
             return nil
         }
 
-        guard let nameOffset = byteOffset(ofIndexedLine: line, column: column) else {
+        guard let nameOffset = positions.offset(ofLine: line, column: column) else {
             return nil
         }
+        let offsetForSourceKit = positions.offsetForSourceKit(of: nameOffset)
 
         if !configuration.includePublicAndOpen,
-           [.public, .open].contains(editorOpen.propertyAtOffset(nameOffset, property: \.accessibility)) {
+           [.public, .open].contains(editorOpen.propertyAtOffset(offsetForSourceKit, property: \.accessibility)) {
             return nil
         }
 
@@ -212,7 +224,7 @@ private extension SwiftLintFile {
             }
         }
 
-        let cursorInfo = cursorInfo(at: nameOffset, compilerArguments: compilerArguments)
+        let cursorInfo = cursorInfo(at: offsetForSourceKit, compilerArguments: compilerArguments)
 
         if let declaration = cursorInfo?.value["key.fully_annotated_decl"] as? String,
            UnusedDeclarationUsage.isMarkedForObjectiveC(fullyAnnotatedDeclaration: declaration) {
@@ -237,22 +249,12 @@ private extension SwiftLintFile {
     }
 
     /// USRs of what SourceKit says the declaration overrides, or satisfies as a requirement of a protocol.
-    private func overriddenUSRs(of indexEntity: SourceKittenDictionary, compilerArguments: [String]) -> [String] {
-        let overrides = cursorInfo(atPositionOf: indexEntity, compilerArguments: compilerArguments)?
-            .value["key.overrides"] as? [[String: any SourceKitRepresentable]]
+    private static func overriddenUSRs(in cursorInfo: SourceKittenDictionary?) -> [String] {
+        let overrides = cursorInfo?.value["key.overrides"] as? [[String: any SourceKitRepresentable]]
         return overrides?.compactMap { $0["key.usr"] as? String } ?? []
     }
 
-    /// What SourceKit tells about the declaration at the entity's position, or about the one referred to there.
-    private func cursorInfo(atPositionOf indexEntity: SourceKittenDictionary, compilerArguments: [String])
-        -> SourceKittenDictionary? {
-        guard let line = indexEntity.line, let column = indexEntity.column,
-              let offset = byteOffset(ofIndexedLine: line, column: column) else {
-            return nil
-        }
-        return cursorInfo(at: offset, compilerArguments: compilerArguments)
-    }
-
+    /// What SourceKit tells about the declaration at an offset that it has, or about the one referred to there.
     func cursorInfo(at byteOffset: ByteCount, compilerArguments: [String]) -> SourceKittenDictionary? {
         let request = Request.cursorInfoWithoutSymbolGraph(
             file: path!.filepath, offset: byteOffset, arguments: compilerArguments
