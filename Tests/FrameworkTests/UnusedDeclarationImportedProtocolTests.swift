@@ -12,6 +12,7 @@ struct UnusedDeclarationImportedProtocolTests {
             struct Age {}
 
             func == (lhs: Age, rhs: Age) -> Bool { true }
+            func ↓leftover() {}
 
             extension Age: Equatable & Marker {}
 

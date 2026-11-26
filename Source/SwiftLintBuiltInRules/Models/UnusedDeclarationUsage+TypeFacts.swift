@@ -72,14 +72,7 @@ extension UnusedDeclarationUsage {
             if let type = declaredOrExtendedType(of: entity) {
                 noteType(type, declaredOrExtendedBy: entity)
             }
-            if entity.declaresType, let usr = entity.usr {
-                facts.declaredTypes.insert(usr)
-                if parent.declaresType {
-                    typeAround[usr] = parent.usr
-                } else {
-                    namedByExtensionAround[usr] = namedByHeader(of: parent)
-                }
-            }
+            noteDeclaredType(entity, in: parent)
             if let owner, parent.declarationKind != .protocol {
                 noteGeneratedCode(of: owner, replacedBy: entity)
             }
@@ -102,6 +95,22 @@ extension UnusedDeclarationUsage {
                 return nil
             }
             return Member(type: type, name: name)
+        }
+
+        /// Notes the entity and what is around it, if it declares a type.
+        private mutating func noteDeclaredType(_ entity: SourceKittenDictionary, in parent: SourceKittenDictionary) {
+            guard entity.declaresType, let usr = entity.usr else {
+                return
+            }
+            facts.declaredTypes.insert(usr)
+            if entity.name == "Void" {
+                facts.typesNamedVoid.insert(usr)
+            }
+            if parent.declaresType {
+                typeAround[usr] = parent.usr
+            } else {
+                namedByExtensionAround[usr] = namedByHeader(of: parent)
+            }
         }
 
         /// The entity as what file scope declares under the given name, if it is an operator or a function.
@@ -183,28 +192,14 @@ extension UnusedDeclarationUsage {
             if let usr = marked.usr {
                 facts.runBySwiftTesting.insert(usr)
             }
-            if marksTest {
-                noteDeclarations(namedLike: marked, in: parent)
+            if marksTest, let name = marked.memberName?.withoutLabels {
+                let type = declaredOrExtendedType(of: parent) ?? Member.unknownType
+                facts.tests.insert(Member(type: type, name: name))
             }
             if marksTest, parent.declaresType, let usr = parent.usr {
                 typesHoldingTests.insert(usr)
             } else if marksTest {
                 facts.runBySwiftTesting.formUnion(namedByHeader(of: parent))
-            }
-        }
-
-        /// Notes what the call can choose with which the code of `@Test` runs the given test. The call is written
-        /// with the name and the labels of the test, and it is in code that can wait: of a test and a function
-        /// marked `async` with the same name and labels, it chooses the one marked `async`.
-        private mutating func noteDeclarations(namedLike test: SourceKittenDictionary,
-                                               in parent: SourceKittenDictionary) {
-            guard let name = test.memberName else {
-                return
-            }
-            if let type = declaredOrExtendedType(of: parent) {
-                facts.membersRunBySwiftTesting.insert(Member(type: type, name: name))
-            } else if name.kind == .function {
-                facts.membersRunBySwiftTesting.insert(Member(type: Member.functions, name: name))
             }
         }
 

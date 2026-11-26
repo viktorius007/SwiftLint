@@ -37,18 +37,26 @@
 //   one of the two attributes. The index tells which macro an attribute refers to, and it lists that reference
 //   right before the declaration that carries the attribute. SourceKit tells which module declares the macro (see
 //   `isDeclaredBySwiftTesting`). For an attribute that another macro attaches, the index has a reference without a
-//   name, and such a test is not known. The code of `@Test` calls the test by its name and labels, and that call
-//   can choose another declaration (see `noteDeclarations`). So a test in a type counts as a member that is used
-//   by name, and a test at file scope stands for every function of its name and labels at file scope. The code
-//   that the macros of Swift Testing expand to calls members of its types whose names start with `__`. An
+//   name, and such a test or suite is not known. The code of `@Test` calls the test by its name, and the compiler
+//   chooses what that call runs among everything of that name that the call can reach. It can choose another
+//   declaration than the test: a function marked `async`, one with further parameters that have default values,
+//   one that the type of the test inherits, an inherited property whose value can be called. So a test stands for
+//   every declaration that has its name, whatever its labels, and is of its kind, a method or property of an
+//   instance for a test that is a method of an instance and a static one for a static test, in the type of the
+//   test, in everything that it inherits from, and in the protocols that a type can conform to without naming
+//   them (see `impliedProtocols`). A test at file scope stands for every function of its name at file scope, in
+//   whatever file and module. Where the type of a test is not known, or is or inherits from, as far as known, a
+//   type that no linted file declares, the test stands for its name in every type (see `namedLikeTests`). What
+//   the value of such a property runs when it is called, its `callAsFunction`, is not known. The code of `@Test`
+//   also writes `Void`, so every type and type alias of that name counts as used where a linted file has a test.
+//   The code that the macros of Swift Testing expand to calls members of its types whose names start with `__`. An
 //   extension of such a type can declare a member that these calls choose, so each of its members with such a name
 //   counts as used.
 //
-// The entry points, the values of a property wrapper, the tests of Swift Testing and the witnesses of an extension
-// that the index leaves out are decided by name. A name tells nothing about types and constraints, so an unused
-// member is kept if it shares its name and labels with a used one of the same type, also where a constraint of its
-// extension rules it out. So is a function at file scope that shares them with a test at file scope, in whatever
-// file and module.
+// The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves out
+// are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it shares
+// its name and labels with a used one of the same type, also where a constraint of its extension rules it out.
+// What a test of Swift Testing stands for is decided by its name without labels (see above).
 //
 // A type alias that a linted file declares counts as standing for every type that its declaration mentions, also
 // for a generic argument as in `typealias A = B<C>` and for a type after `where`. A type inherits from the alias
@@ -80,12 +88,20 @@ struct UnusedDeclarationUsage {
         static let fileScope = ""
         /// Stands for the type of a function at file scope that is no operator.
         static let functions = "()"
+        /// Stands for a type that is not known: the one that an extension with a header in parentheses extends,
+        /// and the one of a test at file scope.
+        static let unknownType = "?"
     }
 
     struct Name: Hashable {
         /// Base name with argument labels, as the index spells it: `copy(to:)`, `count`.
         let name: String
         let kind: NameKind
+
+        /// The name without argument labels: `copy` for `copy(to:)`.
+        var withoutLabels: Self {
+            Self(name: String(name.prefix { $0 != "(" }), kind: kind)
+        }
     }
 
     /// What can stand for each other under one name: a type alias satisfies an associated type, a static
@@ -127,9 +143,12 @@ struct UnusedDeclarationUsage {
         /// The tests and suites of Swift Testing, the types that the expansions of its macros name, and what
         /// they can call.
         var runBySwiftTesting = Set<String>()
-        /// The tests of Swift Testing by name, in types and at file scope: the code that runs a test calls it by
-        /// its name.
-        var membersRunBySwiftTesting = Set<Member>()
+        /// The tests of Swift Testing, each as a member of its type, or of `Member.unknownType`, and named
+        /// without its labels: the code that runs a test calls it by its name, and the compiler chooses what
+        /// that call runs.
+        var tests = Set<Member>()
+        /// The types and type aliases named `Void`: the code that runs a test writes that name.
+        var typesNamedVoid = Set<String>()
     }
 
     static let decodable = "s:Se"
@@ -143,8 +162,14 @@ struct UnusedDeclarationUsage {
         codable, decodable, encodable, "s:s8SendableP", "s:s16SendableMetatypeP", "s:s15BitwiseCopyableP",
     ]
 
+    /// The protocols that a type can conform to without naming them, and that an extension can give members to:
+    /// `Equatable`, `Hashable` and `RawRepresentable` for an enum, `Actor` for an actor.
+    static let impliedProtocols: Set = ["s:SQ", "s:SH", "s:SY", "s:ScA"]
+
     private let referenced: Set<String>
     private let usedMembers: Set<Member>
+    /// What the calls can choose with which the code of `@Test` runs the tests (see `namedLikeTests`).
+    private let namedLikeTests: (members: Set<Member>, names: Set<Name>)
     /// For each type that can hold a witness of a conformance missing from the index: the requirements of
     /// these conformances.
     private let witnessNames: [String: Set<Name>]
@@ -180,8 +205,11 @@ struct UnusedDeclarationUsage {
             usedMembers.insert(Member(type: type, name: Name(name: "wrappedValue", kind: .instance)))
             usedMembers.insert(Member(type: type, name: Name(name: "projectedValue", kind: .instance)))
         }
-        usedMembers.formUnion(facts.flatMap(\.membersRunBySwiftTesting))
         self.usedMembers = usedMembers
+        namedLikeTests = Self.namedLikeTests(facts, inheritance, declaredTypes)
+        if facts.contains(where: \.tests.isNotEmpty) {
+            referenced.formUnion(facts.flatMap(\.typesNamedVoid))
+        }
 
         var requirements = facts.reduce(into: [String: Set<Name>]()) { all, facts in
             all.merge(facts.requirements) { $0.union($1) }
@@ -240,6 +268,29 @@ struct UnusedDeclarationUsage {
         return members
     }
 
+    /// What the calls can choose with which the code of `@Test` runs the tests, by name without labels: the
+    /// members of the type of a test, of everything that it inherits from and of `impliedProtocols`. Of a type
+    /// that no linted file declares, the inherited types are known in part only. So where the type of a test is
+    /// not known, or is such a type or inherits from one, as far as known, the test stands for its name in every
+    /// type. For a test at file scope, that is every function of its name at file scope: nothing else is of its
+    /// kind.
+    private static func namedLikeTests(_ facts: [TypeFacts],
+                                       _ inheritance: Inheritance,
+                                       _ declaredTypes: Set<String>) -> (members: Set<Member>, names: Set<Name>) {
+        let typesKnownInFull = declaredTypes.union(knownTypes)
+        var members = Set<Member>()
+        var names = Set<Name>()
+        for test in facts.flatMap(\.tests) {
+            let owners = inheritance.withInherited([test.type])
+            if owners.isSubset(of: typesKnownInFull) {
+                members.formUnion(owners.union(impliedProtocols).map { Member(type: $0, name: test.name) })
+            } else {
+                names.insert(test.name)
+            }
+        }
+        return (members, names)
+    }
+
     /// Every `main()` that a type marked `@main` can find.
     private static func entryPoints(_ collectedInfo: [SwiftLintFile: UnusedDeclarationRule.FileUSRs],
                                     _ inheritance: Inheritance,
@@ -290,8 +341,20 @@ struct UnusedDeclarationUsage {
             return false
         }
         return usedMembers.contains(member)
+            || isNamedLikeTest(member)
             || ownersOfUnknownWitnesses.contains(member.type)
             || witnessNames[member.type]?.contains(member.name) == true
+    }
+}
+
+private extension UnusedDeclarationUsage {
+    func isNamedLikeTest(_ member: Member) -> Bool {
+        guard namedLikeTests.members.isNotEmpty || namedLikeTests.names.isNotEmpty else {
+            return false
+        }
+        let name = member.name.withoutLabels
+        return namedLikeTests.names.contains(name)
+            || namedLikeTests.members.contains(Member(type: member.type, name: name))
     }
 }
 

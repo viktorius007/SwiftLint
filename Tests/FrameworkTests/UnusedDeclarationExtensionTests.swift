@@ -104,10 +104,11 @@ struct UnusedDeclarationExtensionTests {
         )
     }
 
-    // A limit: the index has no extension without members, and lists what its header names at file scope. The
-    // first name of the header is no use, every other one is, also the last one, which is the extended type.
+    // A limit: the index lacks an extension without members if none of its inherited types is a single protocol
+    // or class, and lists what its header names at file scope. There, the name that the header starts with is no
+    // use unless it is a type alias, and every other name is one, also the last one, which is the extended type.
     @Test(.temporaryDirectory)
-    func extensionWithoutMembersUsesAllOfItsHeaderButTheFirstName() throws {
+    func headerOfAnExtensionThatTheIndexLacksUsesAllButATypeThatItStartsWith() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
             """
             struct ↓Plain {}
@@ -118,6 +119,29 @@ struct UnusedDeclarationExtensionTests {
                 }
             }
             extension First.Second.Third {}
+            struct ↓Wrapped {}
+            extension Wrapped? {}
+            struct Element {}
+            extension [Element] {}
+            struct Actual {}
+            typealias Alias = Actual
+            extension Alias {}
+            """,
+        ])
+    }
+
+    // The index has an extension without members that conforms to a single protocol.
+    @Test(.temporaryDirectory)
+    func extensionWithoutMembersThatTheIndexHasDoesNotUseTheTypeItExtends() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            protocol Marker {}
+            enum ↓Outer {
+                struct ↓Inner {}
+            }
+            extension Outer.Inner: Marker {}
+            struct Wrapped {}
+            extension Wrapped?: Marker {}
             """,
         ])
     }
