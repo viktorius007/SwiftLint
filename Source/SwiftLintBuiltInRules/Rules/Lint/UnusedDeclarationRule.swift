@@ -135,7 +135,8 @@ private extension SwiftLintFile {
             overridden: { [self] in overriddenUSRs(of: $0, compilerArguments: compilerArguments) },
             isInitializedConstant: initializedConstantFinder(),
             moduleName: { [self] in cursorInfo(atPositionOf: $0, compilerArguments: compilerArguments)?.moduleName },
-            moduleNameOfType: { [self] in moduleName(ofTypeWithUSR: $0, compilerArguments: compilerArguments) }
+            moduleNameOfType: { [self] in moduleName(ofTypeWithUSR: $0, compilerArguments: compilerArguments) },
+            constrainsSelf: selfConstraintFinder()
         )
         let declared = index.traverseEntitiesDepthFirst { parent, indexEntity in
             let member = collector.visit(indexEntity, in: parent)

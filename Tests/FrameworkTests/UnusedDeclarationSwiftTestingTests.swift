@@ -203,6 +203,30 @@ struct UnusedDeclarationSwiftTestingTests {
         ])
     }
 
+    // `#require` expands to a call of `__required()` on a `Result`, and the compiler chooses the one that the
+    // extension declares.
+    @Test(.temporaryDirectory)
+    func memberOfResultThatAnExpansionCallsIsUsed() throws {
+        try expectOnlyMarkedDeclarationsReported(in: [
+            """
+            import Testing
+
+            extension Result where Success == Int, Failure == any Error {
+                func __required() throws -> Int { try get() }
+                func ↓leftover() {}
+            }
+            extension Optional {
+                func ↓__required() {}
+            }
+
+            @Test func succeeds() throws {
+                let value: Int? = 1
+                _ = try #require(value)
+            }
+            """,
+        ])
+    }
+
     // At the name of the type alias, SourceKit tells about the alias and its module. It is asked about the type.
     @Test(.temporaryDirectory)
     func memberAddedToATypeOfSwiftTestingThroughATypeAliasIsUsed() throws {

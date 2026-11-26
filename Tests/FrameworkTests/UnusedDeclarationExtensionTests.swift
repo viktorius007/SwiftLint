@@ -104,9 +104,10 @@ struct UnusedDeclarationExtensionTests {
         )
     }
 
-    // A limit: the index lacks an extension without members if none of its inherited types is a single protocol
-    // or class, and lists what its header names at file scope. There, the name that the header starts with is no
-    // use unless it is a type alias, and every other name is one, also the last one, which is the extended type.
+    // A limit: the index lacks an extension without members, also without generated ones, if none of its inherited
+    // types is a single protocol or class, and lists what its header names at file scope. There, the name that the
+    // header starts with is no use unless it is a type alias, and every other name is one, also the last one, which
+    // is the extended type.
     @Test(.temporaryDirectory)
     func headerOfAnExtensionThatTheIndexLacksUsesAllButATypeThatItStartsWith() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
@@ -130,7 +131,8 @@ struct UnusedDeclarationExtensionTests {
         ])
     }
 
-    // The index has an extension without members that conforms to a single protocol.
+    // The index has an extension without members that inherits from a single protocol, and one for which the
+    // compiler generates a member, as `==` for `Compared`.
     @Test(.temporaryDirectory)
     func extensionWithoutMembersThatTheIndexHasDoesNotUseTheTypeItExtends() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
@@ -142,6 +144,10 @@ struct UnusedDeclarationExtensionTests {
             extension Outer.Inner: Marker {}
             struct Wrapped {}
             extension Wrapped?: Marker {}
+            struct ↓Compared {
+                var field = 0
+            }
+            extension Compared: Equatable & Marker {}
             """,
         ])
     }

@@ -62,7 +62,8 @@ struct UnusedDeclarationTestExpansionTests {
         ])
     }
 
-    // Of a static test and an inherited type of its name, the call chooses the initializer of the type.
+    // Of a static test and an inherited type or type alias of its name, the call chooses the initializer of the
+    // type.
     @Test(.temporaryDirectory)
     func typeThatTheCallOfAStaticTestCanChooseIsUsed() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
@@ -84,6 +85,17 @@ struct UnusedDeclarationTestExpansionTests {
             }
             struct ↓Other {
                 struct ↓shared {}
+            }
+
+            protocol Shared {
+                typealias build = Builder
+                typealias ↓leftover = Builder
+            }
+            struct Builder {
+                init() async {}
+            }
+            struct Split: Shared {
+                @Test static func build() {}
             }
             """,
         ])

@@ -16,6 +16,11 @@ extension UnusedDeclarationUsage {
         private let moduleName: (SourceKittenDictionary) -> String?
         /// Asks SourceKit for the name of the module that declares the type with the given USR.
         private let moduleNameOfType: (String) -> String?
+        /// Tells whether the source constrains a protocol to the type of a reference: `where Self: Q`.
+        private let constrainsSelf: (SourceKittenDictionary) -> Bool
+        /// `Swift.Result`. The code that the macros of Swift Testing expand to calls members of it whose names
+        /// start with `__`, like members of the types of Swift Testing.
+        private static let result = "s:s6ResultO"
         /// For each USR that SourceKit was asked about: whether Swift Testing declares it.
         private var declaredBySwiftTesting = [String: Bool]()
         /// For each type that the body of a type declares: that type.
@@ -51,12 +56,14 @@ extension UnusedDeclarationUsage {
              overridden: @escaping (SourceKittenDictionary) -> [String],
              isInitializedConstant: @escaping (SourceKittenDictionary) -> Bool,
              moduleName: @escaping (SourceKittenDictionary) -> String?,
-             moduleNameOfType: @escaping (String) -> String?) {
+             moduleNameOfType: @escaping (String) -> String?,
+             constrainsSelf: @escaping (SourceKittenDictionary) -> Bool) {
             facts.conformancesMissingFromIndex = conformancesMissingFromIndex
             self.overridden = overridden
             self.isInitializedConstant = isInitializedConstant
             self.moduleName = moduleName
             self.moduleNameOfType = moduleNameOfType
+            self.constrainsSelf = constrainsSelf
         }
 
         /// Notes what the entity tells about types.
@@ -77,7 +84,7 @@ extension UnusedDeclarationUsage {
                 noteGeneratedCode(of: owner, replacedBy: entity)
             }
             if let owner, entity.name?.hasPrefix("__") == true, let usr = entity.usr,
-               isDeclaredBySwiftTesting(owner, referredToAtPositionOf: nil) {
+               owner == Self.result || isDeclaredBySwiftTesting(owner, referredToAtPositionOf: nil) {
                 facts.runBySwiftTesting.insert(usr)
             }
             guard let name = entity.memberName else {
@@ -86,12 +93,10 @@ extension UnusedDeclarationUsage {
             guard let type = owner else {
                 return memberAtFileScope(entity, named: name)
             }
-            if parent.declarationKind == .protocol {
-                // What a protocol declares in its body is a requirement and no witness. Its type aliases are
-                // neither.
-                if entity.declarationKind != .typealias {
-                    facts.requirements[type, default: []].insert(name)
-                }
+            if parent.declarationKind == .protocol, entity.declarationKind != .typealias {
+                // What a protocol declares in its body is a requirement and no witness. A type alias there is a
+                // member, like one in an extension of the protocol.
+                facts.requirements[type, default: []].insert(name)
                 return nil
             }
             return Member(type: type, name: name)
@@ -146,7 +151,15 @@ extension UnusedDeclarationUsage {
             if attributes.contains(.propertyWrapper) {
                 facts.propertyWrappers.insert(type)
             }
-            let related = entity.related
+            var related = entity.related
+            if entity.declarationKind == .protocol {
+                // The index does not relate a protocol to what its `where` clause constrains it to. The source
+                // is asked about the references that the protocol has beside the related ones.
+                let known = Set(related.compactMap(\.usr))
+                related += entity.entities.filter { reference in
+                    reference.isReference && reference.usr.map(known.contains) == false && constrainsSelf(reference)
+                }
+            }
             if related.isNotEmpty {
                 facts.inherited[type, default: []].formUnion(related.compactMap(\.usr))
                 facts.inheritedProtocolsAndTypeAliases.formUnion(

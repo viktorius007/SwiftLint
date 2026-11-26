@@ -21,38 +21,40 @@
 //   file a declared one is not known, and the stored properties count as used.
 // * A conformance uses the members that satisfy the protocol's requirements. The index lists these witnesses
 //   under the conforming declaration (see `isWitnessDeclaredElsewhere`), with one exception: the compiler leaves
-//   an extension without members out of the index if none of its inherited types is a single protocol or class,
-//   as in `extension T: P & Q {}` or with a type alias of such a composition. For these extensions, a member
-//   counts as a witness if a requirement of one of the protocols has its name, and if the type could find it:
-//   in itself, in what it inherits from, or at file scope for an operator. The requirements of a protocol that
-//   no linted file declares are not known. Then everything the type inherits and every operator at file scope
-//   counts as a witness. The type's own members do not: SourceKit tells for each of them whether it satisfies
-//   a requirement. It tells so in the file that declares the conformance only. In all other files, the type's
-//   members count as witnesses too.
+//   an extension out of the index if it has no members, also none that the compiler generates for it, and if
+//   none of its inherited types is a single protocol or class, as in `extension T: P & Q {}` or with a type
+//   alias of such a composition. For these extensions, a member counts as a witness if a requirement of one of
+//   the protocols has its name, and if the type could find it: in itself, in what it inherits from, or at file
+//   scope for an operator. The requirements of a protocol that no linted file declares are not known. Then
+//   everything the type inherits and every operator at file scope counts as a witness. The type's own members do
+//   not: SourceKit tells for each of them whether it satisfies a requirement. It tells so in the file that
+//   declares the conformance only. In all other files, the type's members count as witnesses too.
 // * A test and a suite of Swift Testing are run by the code that `@Test` and `@Suite` expand to. The code of
-//   `@Test` also names the type of the test as the source around the test does: `Outer.Inner.self` in the body of
-//   `Inner` in the body or in an extension of `Outer`, and what the header of the extension names for a test in an
-//   extension (see `typeFacts`). The index has that code only if the compiler expanded the macros, and analyzer
-//   rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run if it carries
-//   one of the two attributes. The index tells which macro an attribute refers to, and it lists that reference
-//   right before the declaration that carries the attribute. SourceKit tells which module declares the macro (see
-//   `isDeclaredBySwiftTesting`). For an attribute that another macro attaches, the index has a reference without a
-//   name, and such a test or suite is not known. The code of `@Test` calls the test by its name, and the compiler
-//   chooses what that call runs among everything of that name that the call can reach. It can choose another
-//   declaration than the test: a function marked `async`, one with further parameters that have default values,
-//   one that the type of the test inherits, an inherited property whose value can be called, for a static test
-//   the initializer of an inherited type. So a test stands for every declaration that has its name, whatever its
-//   labels, and is of its kind, a method or property of an instance for a test that is a method of an instance,
-//   a static one or a type for a static test, in the type of the test, in everything that it inherits from, and
-//   in the protocols that a type can conform to without naming them (see `impliedProtocols`). A test at file scope
-//   stands for every function of its name at file scope, in whatever file and module. Where the type of a test is
-//   not known, or is or inherits from, as far as known, a type that no linted file declares, the test stands for
-//   its name in every type (see `namedLikeTests`). What the value of such a property runs when it is called, its
-//   `callAsFunction`, is not known. The code of `@Test` also writes `Void`, so every type and type alias of that
-//   name counts as used where a linted file has a test.
-//   The code that the macros of Swift Testing expand to calls members of its types whose names start with `__`. An
-//   extension of such a type can declare a member that these calls choose, so each of its members with such a name
-//   counts as used.
+//   `@Test` also names the type of the test as the source around the test does: `Outer.Inner.self` in the body
+//   of `Inner` in the body or in an extension of `Outer`, and what the header of the extension names for a test
+//   in an extension (see `typeFacts`). The index has that code only if the compiler expanded the macros, and
+//   analyzer rules get an index without these expansions (see `AnalyzerRule`). So a declaration counts as run if
+//   it carries one of the two attributes. The index tells which macro an attribute refers to, and it lists that
+//   reference right before the declaration that carries the attribute. SourceKit tells which module declares the
+//   macro (see `isDeclaredBySwiftTesting`). For an attribute that another macro attaches, the index has a
+//   reference without a name, and such a test or suite is not known. The code of `@Test` calls the test by its
+//   name, and the compiler chooses what that call runs among everything of that name that the call can reach. It
+//   can choose another declaration than the test: a function marked `async`, one with further parameters that
+//   have default values, one that the type of the test inherits, an inherited property whose value can be
+//   called, for a static test the initializer of an inherited type. So a test stands for every declaration that
+//   has its name, whatever its labels, and is of its kind, a method or property of an instance for a test that
+//   is a method of an instance, and for a static test a static one or a nested struct, enum, class, actor or
+//   type alias, in the type of the test, in everything that it inherits from, and in the protocols that a type
+//   can conform to without naming them (see `impliedProtocols`). A test at file scope stands for every function
+//   of its name at file scope, in whatever file and module. Where the type of a test is not known, or is or
+//   inherits from, as far as known, a type that no linted file declares, the test stands for its name in every
+//   type (see `namedLikeTests`). What the value of such a property runs when it is called, its `callAsFunction`,
+//   is not known. The code of `@Test` also writes `Void`, so every type and type alias of that name counts as
+//   used where a linted file has a test. Where a nested type or type alias, in the type of a test or in what it
+//   inherits from, has the name of the type of the test or of a type around it, the code of `@Test` names the
+//   nested one. That is not known. The code that the macros of Swift Testing expand to calls members of its
+//   types and of `Swift.Result` whose names start with `__`. An extension of such a type can declare a member
+//   that these calls choose, so each of its members with such a name counts as used.
 //
 // The entry points, the values of a property wrapper and the witnesses of an extension that the index leaves out
 // are decided by name. A name tells nothing about types and constraints, so an unused member is kept if it shares
@@ -62,11 +64,13 @@
 // A type alias that a linted file declares counts as standing for every type that its declaration mentions, also
 // for a generic argument as in `typealias A = B<C>` and for a type after `where`. A type inherits from the alias
 // where the index or the syntax names the alias as inherited. For a superclass that is written as an alias, the
-// index names the class instead. An extension uses every type alias that its header names. Where the alias stands
-// for the extended type, it also uses the types around the alias (see `isExtensionWrittenWithoutItsType`). A
-// protocol or a type alias that no linted file declares counts as inheriting from every type that SourceKit prints
-// after its colon or equals sign and before `where`, also from a generic argument of a superclass, as in `protocol
-// P: B<C>` with a class `B`.
+// index names the class instead. An extension uses every type alias that its header names. Where the alias
+// stands for the extended type, it also uses the types around the alias (see
+// `isExtensionWrittenWithoutItsType`). A protocol inherits from what its `where` clause constrains it to, as
+// from `Q` in `protocol P where Self: Q`. The index does not relate the two, and the source tells (see
+// `selfConstraintFinder`). A protocol or a type alias that no linted file declares counts as inheriting from
+// every type that SourceKit prints after its colon or equals sign and before `where`, also from a generic
+// argument of a superclass, as in `protocol P: B<C>` with a class `B`.
 //
 // A declaration is known by its USR in all files together, so two declarations with one USR are one. Two
 // modules with one name, each seen by other files of one run, have the same USRs: what SourceKit tells about a
@@ -78,43 +82,6 @@
 
 /// Everything that all files together use.
 struct UnusedDeclarationUsage {
-    /// A member of a type, as far as its name tells.
-    struct Member: Hashable {
-        /// USR of the type that declares the member, or that the member's extension extends. Empty for an
-        /// operator at file scope.
-        let type: String
-        let name: Name
-
-        /// Stands for the type of an operator at file scope.
-        static let fileScope = ""
-        /// Stands for the type of a function at file scope that is no operator.
-        static let functions = "()"
-        /// Stands for a type that is not known: the one that an extension with a header in parentheses extends,
-        /// and the one of a test at file scope.
-        static let unknownType = "?"
-    }
-
-    struct Name: Hashable {
-        /// Base name with argument labels, as the index spells it: `copy(to:)`, `count`.
-        let name: String
-        let kind: NameKind
-
-        /// The name without argument labels: `copy` for `copy(to:)`.
-        var withoutLabels: Self {
-            Self(name: String(name.prefix { $0 != "(" }), kind: kind)
-        }
-    }
-
-    /// What can stand for each other under one name: a type alias satisfies an associated type, a static
-    /// method never an instance method.
-    enum NameKind {
-        case instance
-        case `static`
-        case type
-        /// A function at file scope that is no operator.
-        case function
-    }
-
     /// What one file tells about types, each named by USR.
     struct TypeFacts: Hashable {
         /// Types marked `@main`.

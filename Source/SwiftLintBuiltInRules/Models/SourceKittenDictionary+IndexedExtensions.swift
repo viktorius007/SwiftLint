@@ -93,6 +93,26 @@ extension SwiftLintFile {
     }
 }
 
+extension SwiftLintFile {
+    /// Returns a function that tells whether a reference of the file's index is at a type that the `where` clause
+    /// of a protocol constrains the protocol to: at `Q` and at `R` for `protocol P where Self: Q & R`. The file is
+    /// walked when the function is called for the first time.
+    func selfConstraintFinder() -> (SourceKittenDictionary) -> Bool {
+        var offsetsOfConstraints: Set<Int>?
+        let converter = locationConverter
+        return { [self] reference in
+            guard let line = reference.line, let column = reference.column else {
+                return false
+            }
+            let offsets = offsetsOfConstraints
+                ?? SelfConstraintCollector(viewMode: .sourceAccurate).walk(tree: syntaxTree, handler: \.offsets)
+            offsetsOfConstraints = offsets
+            // The converter counts lines like the compiler does, also for files with carriage returns.
+            return offsets.contains(converter.position(ofLine: Int(line), column: Int(column)).utf8Offset)
+        }
+    }
+}
+
 private extension SourceKittenDictionary {
     var isReference: Bool {
         kind?.starts(with: "source.lang.swift.ref.") == true
@@ -134,6 +154,22 @@ private extension TypeSyntax {
             return element.type.nameTokens
         }
         return []
+    }
+}
+
+/// Collects the offsets of the names of the types that protocols are constrained to in their `where` clauses.
+private final class SelfConstraintCollector: SyntaxVisitor {
+    private(set) var offsets = Set<Int>()
+
+    override func visit(_ node: ProtocolDeclSyntax) -> SyntaxVisitorContinueKind {
+        for requirement in node.genericWhereClause?.requirements ?? [] {
+            if case let .conformanceRequirement(conformance) = requirement.requirement,
+               conformance.leftType.as(IdentifierTypeSyntax.self)?.name.tokenKind == .keyword(.Self) {
+                let names = conformance.rightType.nameTokens
+                offsets.formUnion(names.map(\.positionAfterSkippingLeadingTrivia.utf8Offset))
+            }
+        }
+        return .skipChildren
     }
 }
 
