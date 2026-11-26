@@ -190,8 +190,7 @@ struct UnusedDeclarationTestTypeNameTests {
 
     // A limit: a generic argument that the header of an extension has after the name of the extended type is not
     // among the names that are noted. The code that `@Test` expands to writes `Outer.Box<Int>` and finds the type
-    // alias here. An argument before that name is noted: of `(Wrapper<Int>).Item<String>`, `Int` is and `String`
-    // is not.
+    // alias here. Of `(Wrapper<Int>).Item<String>`, `Int` is before that name and is noted, and `String` is not.
     @Test(.temporaryDirectory)
     func memberThatTakesThePlaceOfAGenericArgumentAfterTheExtendedTypeIsReported() throws {
         try expectOnlyMarkedDeclarationsReported(in: [
